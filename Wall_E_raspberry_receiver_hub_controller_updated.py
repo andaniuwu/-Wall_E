@@ -12,6 +12,7 @@ from datetime import datetime
 from SX127x.LoRa import *
 from SX127x.board_config import BOARD
 
+#Andani was here
 # =======================================================
 # 1. CONFIGURACIÓN DE HARDWARE (PINES GPIO)
 # =======================================================
