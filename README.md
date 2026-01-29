@@ -116,3 +116,32 @@ TBD
 ## Author
 
 rasp_raccoon_berry
+
+## ESP32-S3 LoRa SX1278 Wiring (Flexible SPI Pins)
+
+> **Nota:** El ESP32-S3 permite asignar cualquier función SPI (MOSI, MISO, SCK, CS) a casi cualquier GPIO mediante software. Por eso, en el pinout/datasheet solo aparecen los números de GPIO y no la función SPI fija. La asignación se realiza así:
+> 
+> ```cpp
+> SPI.begin(SCK, MISO, MOSI, SS);
+> ```
+> 
+> En este proyecto:
+> 
+> | SX1278 Pin | ESP32 GPIO | ESP32 Pin# | Función en código |
+> |-----------|------------|------------|-------------------|
+> | SCK       | GPIO12     | Pin 19     | SPI SCK           |
+> | MISO      | GPIO13     | Pin 18     | SPI MISO          |
+> | MOSI      | GPIO11     | Pin 17     | SPI MOSI          |
+> | NSS (CS)  | GPIO18     | Pin 9      | LORA_SS           |
+> | RESET     | GPIO14     | Pin 13     | LORA_RST          |
+> | DIO0      | GPIO26     | Pin 38     | LORA_DIO0         |
+> | 3.3V      | 3V3        | Pin 2/3    | Alimentación      |
+> | GND       | GND        | Pin 1/15/16| Tierra            |
+
+Asegúrate de cablear según esta tabla y de que tu código incluya la línea:
+
+```cpp
+SPI.begin(12, 13, 11, 18); // SCK, MISO, MOSI, SS
+```
+
+Esto garantiza compatibilidad y funcionamiento correcto con el SX1278.
