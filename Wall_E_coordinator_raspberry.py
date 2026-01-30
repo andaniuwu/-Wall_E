@@ -159,7 +159,15 @@ def initialize_hardware():
 def configure_lora():
     """Configure LoRa module for receiver operation"""
     try:
-        # Set frequency to 433 MHz
+        # 1. Set to sleep mode first
+        spi_write(REG_OP_MODE, 0x80)  # Sleep mode
+        time.sleep(0.01)
+        
+        # 2. Set to LoRa mode (not FSK)
+        spi_write(REG_OP_MODE, 0x80)  # Sleep mode + LoRa mode
+        time.sleep(0.01)
+        
+        # 3. Set frequency to 433 MHz
         freq = int(FREQUENCY)
         frf = int(freq / 61.03515625)
         
@@ -167,29 +175,46 @@ def configure_lora():
         spi_write(REG_FREQ_MID, (frf >> 8) & 0xFF)
         spi_write(REG_FREQ_LSB, frf & 0xFF)
         
-        # Power configuration
+        # 4. Power configuration (max power)
         spi_write(REG_PA_CONFIG, 0xFF)
         
-        # Modem config for 125 kHz bandwidth, SF7, CR4/5
+        # 5. Set FIFO base addresses
+        spi_write(REG_FIFO_RX_BASE_ADDR, 0x00)
+        spi_write(0x0E, 0x00)  # REG_FIFO_TX_BASE_ADDR
+        
+        # 6. Modem config for 125 kHz bandwidth, SF7, CR4/5, explicit header
         spi_write(REG_MODEM_CONFIG_1, 0x72)
         spi_write(REG_MODEM_CONFIG_2, 0x74)
         
-        # Sync word (private network) - DEBE COINCIDIR CON ESP32
+        # 7. Enable CRC
+        spi_write(0x1E, 0x74)  # REG_MODEM_CONFIG_2 with CRC on
+        
+        # 8. Sync word (private network) - DEBE COINCIDIR CON ESP32
         spi_write(REG_SYNC_WORD, 0x21)
         
-        # Preamble
+        # 9. Preamble length (8 symbols)
         spi_write(REG_PREAMBLE_MSB, 0x00)
         spi_write(REG_PREAMBLE_LSB, 0x08)
         
-        # Receive mode
-        spi_write(REG_OP_MODE, 0x85)
+        # 10. Set to standby mode
+        spi_write(REG_OP_MODE, 0x81)  # Standby mode
+        time.sleep(0.01)
         
+        # 11. Set to receive continuous mode
+        spi_write(REG_OP_MODE, 0x85)  # RX continuous
         time.sleep(0.1)
+        
+        # Verify configuration
         print("✓ LoRa configured:")
         print("  - Frequency: 433 MHz")
         print("  - Spreading Factor: 7")
         print("  - Bandwidth: 125 kHz")
         print("  - Coding Rate: 4/5")
+        print("  - Sync Word: 0x21")
+        print(f"  - Mode register: 0x{spi_read(REG_OP_MODE):02X}")
+        print(f"  - Modem Config 1: 0x{spi_read(REG_MODEM_CONFIG_1):02X}")
+        print(f"  - Modem Config 2: 0x{spi_read(REG_MODEM_CONFIG_2):02X}")
+        print(f"  - Sync Word read: 0x{spi_read(REG_SYNC_WORD):02X}")
         return True
     except Exception as e:
         print(f"✗ Configuration error: {e}")
