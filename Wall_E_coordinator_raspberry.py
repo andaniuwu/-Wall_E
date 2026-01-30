@@ -82,6 +82,7 @@ REG_MODEM_CONFIG_2 = 0x1E
 REG_SYNC_WORD = 0x39
 REG_PREAMBLE_MSB = 0x20
 REG_PREAMBLE_LSB = 0x21
+REG_PAYLOAD_LENGTH = 0x22
 
 # ============================================================================
 # SYSTEM CONFIGURATION
@@ -204,13 +205,27 @@ def send_request(device_id):
         # Build 4-byte request packet
         request = bytearray([NET_ID, MSG_REQ, device_id, REQ_READ_DATA])
         
-        # Send via SPI (write to FIFO)
-        spi_write(REG_OP_MODE, 0x81)  # TX mode
+        # 1. Set to standby mode
+        spi_write(REG_OP_MODE, 0x81)  # Standby mode
+        time.sleep(0.01)
         
+        # 2. Set FIFO address to start
+        spi_write(REG_FIFO_ADDR_PTR, 0x00)
+        
+        # 3. Write payload length
+        spi_write(0x22, len(request))  # REG_PAYLOAD_LENGTH
+        
+        # 4. Write data to FIFO
         for byte in request:
             spi_write(REG_FIFO, byte)
         
-        # Wait for transmission
+        # 5. Clear IRQ flags
+        spi_write(REG_IRQ_FLAGS, 0xFF)
+        
+        # 6. Set to TX mode
+        spi_write(REG_OP_MODE, 0x83)  # TX mode
+        
+        # 7. Wait for transmission complete
         start_time = time.time()
         while (spi_read(REG_IRQ_FLAGS) & 0x08) == 0:  # Wait for TxDone
             if time.time() - start_time > 1.0:
@@ -218,9 +233,10 @@ def send_request(device_id):
                 return False
             time.sleep(0.01)
         
-        # Clear interrupt and return to RX mode
+        # 8. Clear interrupt and return to RX mode
         spi_write(REG_IRQ_FLAGS, 0xFF)
         spi_write(REG_OP_MODE, 0x85)  # RX continuous mode
+        time.sleep(0.01)
         
         return True
     except Exception as e:

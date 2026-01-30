@@ -352,10 +352,17 @@ void loop() {
     neopixel.setPixelColor(0, COLOR_PURPLE);
     neopixel.show();
 
+    Serial.printf("📡 Packet received! Size: %d bytes, RSSI: %d dBm\n", packetSize, LoRa.packetRssi());
+
     if (packetSize != 4) {
       // Invalid size - discard and flush buffer
-      while (LoRa.available()) LoRa.read();
-      Serial.println("⚠ Received invalid packet (wrong size)");
+      Serial.print("⚠ Invalid packet size (expected 4, got ");
+      Serial.print(packetSize);
+      Serial.print("): ");
+      while (LoRa.available()) {
+        Serial.printf("%02X ", LoRa.read());
+      }
+      Serial.println();
       // Regresa a standby azul
       neopixel.setPixelColor(0, COLOR_BLUE);
       neopixel.show();
@@ -365,6 +372,10 @@ void loop() {
       uint8_t type    = LoRa.read();    // Byte 1: Message type
       uint8_t tgtId   = LoRa.read();    // Byte 2: Target device ID
       uint8_t req     = LoRa.read();    // Byte 3: Request code
+
+      // Mostrar el paquete recibido
+      Serial.printf("   Packet: [%02X %02X %02X %02X]\n", net, type, tgtId, req);
+      Serial.printf("   Expecting: [%02X %02X %02X %02X]\n", NET_ID, MSG_REQ, TX_ID, REQ_READ_DATA);
 
       // ====================================================================
       // STEP 3: VALIDATE REQUEST
@@ -414,6 +425,7 @@ void loop() {
         neopixel.show();
       } else {
         // No es para este nodo, regresa a standby azul
+        Serial.println("   ⚠ Packet validation failed (not for this device or wrong format)");
         neopixel.setPixelColor(0, COLOR_BLUE);
         neopixel.show();
       }
