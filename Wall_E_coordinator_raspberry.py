@@ -279,6 +279,10 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
     while time.time() - start_time < timeout:
         try:
             irq_flags = spi_read(REG_IRQ_FLAGS)
+            # CRC error flag
+            if irq_flags & 0x20:
+                spi_write(REG_IRQ_FLAGS, 0xFF)
+                continue
             
             # Check for RxDone flag
             if irq_flags & 0x40:
@@ -286,8 +290,8 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
                 nb_bytes = spi_read(REG_RX_NB_BYTES)
                 
                 if nb_bytes == 8:  # Expected response size
-                    rx_base = spi_read(REG_FIFO_RX_BASE_ADDR)
-                    spi_write(REG_FIFO_ADDR_PTR, rx_base)
+                    rx_addr = spi_read(REG_FIFO_RX_CURRENT_ADDR)
+                    spi_write(REG_FIFO_ADDR_PTR, rx_addr)
                     
                     # Read packet bytes
                     packet = []
@@ -296,12 +300,17 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
                     
                     # Clear interrupt
                     spi_write(REG_IRQ_FLAGS, 0xFF)
+                    spi_write(REG_OP_MODE, 0x85)  # Back to RX continuous
                     
                     return bytes(packet)
+                else:
+                    # Clear IRQ and continue listening
+                    spi_write(REG_IRQ_FLAGS, 0xFF)
+                    spi_write(REG_OP_MODE, 0x85)
         except Exception as e:
             pass
         
-        time.sleep(0.05)
+        time.sleep(0.02)
     
     return None
 

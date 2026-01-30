@@ -215,6 +215,11 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
+  // Initialize NeoPixel early (used for error/status indicators)
+  neopixel.begin();
+  neopixel.setPixelColor(0, COLOR_OFF);
+  neopixel.show();
+
   // Initialize UART serial for debugging output
   Serial.begin(115200);
   while (!Serial);           // Wait for Serial Monitor to open
@@ -258,6 +263,7 @@ void setup() {
   LoRa.setCodingRate4(5);               // Coding rate: 4/5 (standard)
   LoRa.setSyncWord(0x21);               // Sync word: 0x21 (private network)
   LoRa.enableCrc();                     // Enable CRC error checking
+  LoRa.receive();                        // Ensure radio stays in RX mode
 
   // Print initialization complete message
   Serial.println("✓ LoRa initialized successfully!");
@@ -269,7 +275,6 @@ void setup() {
   Serial.println("========================================\n");
 
   // Standby: Azul
-  neopixel.begin();
   neopixel.setPixelColor(0, COLOR_BLUE);
   neopixel.show();
   digitalWrite(LED_PIN, HIGH);
@@ -363,6 +368,7 @@ void loop() {
         Serial.printf("%02X ", LoRa.read());
       }
       Serial.println();
+      LoRa.receive(); // Return to RX after flushing
       // Regresa a standby azul
       neopixel.setPixelColor(0, COLOR_BLUE);
       neopixel.show();
@@ -404,6 +410,7 @@ void loop() {
         LoRa.write(uv1_status);                       // UV lamp 1 status (0/1)
         LoRa.write(uv2_status);                       // UV lamp 2 status (0/1)
         LoRa.endPacket();
+        LoRa.receive(); // Ensure radio returns to RX mode
 
         // Incrementar secuencia
         seq++;
@@ -426,6 +433,7 @@ void loop() {
       } else {
         // No es para este nodo, regresa a standby azul
         Serial.println("   ⚠ Packet validation failed (not for this device or wrong format)");
+        LoRa.receive(); // Return to RX after ignoring packet
         neopixel.setPixelColor(0, COLOR_BLUE);
         neopixel.show();
       }
