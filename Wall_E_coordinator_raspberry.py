@@ -173,8 +173,8 @@ def configure_lora():
         spi_write(REG_MODEM_CONFIG_1, 0x72)
         spi_write(REG_MODEM_CONFIG_2, 0x74)
         
-        # Sync word (private network)
-        spi_write(REG_SYNC_WORD, 0x34)
+        # Sync word (private network) - DEBE COINCIDIR CON ESP32
+        spi_write(REG_SYNC_WORD, 0x21)
         
         # Preamble
         spi_write(REG_PREAMBLE_MSB, 0x00)

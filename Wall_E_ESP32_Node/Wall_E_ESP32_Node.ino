@@ -134,8 +134,10 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 #define COLOR_GREEN     neopixel.Color(255, 0, 0)
 #define COLOR_BLUE      neopixel.Color(0, 0, 255)
 #define COLOR_YELLOW    neopixel.Color(255, 200, 0)
-#define COLOR_CYAN      neopixel.Color(255, 0, 255)
+#define COLOR_CYAN      neopixel.Color(0, 255, 255)
 #define COLOR_WHITE     neopixel.Color(255, 255, 255)
+#define COLOR_PURPLE    neopixel.Color(128, 0, 128)
+
 
 // ============================================================================
 // DEVICE CONFIGURATION
@@ -266,7 +268,10 @@ void setup() {
   Serial.println("  Waiting for requests from coordinator...");
   Serial.println("========================================\n");
 
-  // Turn LED on to indicate ready state
+  // Standby: Azul
+  neopixel.begin();
+  neopixel.setPixelColor(0, COLOR_BLUE);
+  neopixel.show();
   digitalWrite(LED_PIN, HIGH);
 }
 
@@ -309,27 +314,28 @@ int readAveragedADC(uint8_t pin, uint8_t samples = 4) {
  */
 
 void loop() {
-  // ========================================================================
-  // STEP 1: READ SENSOR VALUES FROM ADC INPUTS
-  // ========================================================================
-  /*
-   * Read current analog values from sensors.
-   * ADC range: 0-4095 (12-bit on ESP32)
-   * 
-   * Option A: Direct reading (fast, may have noise)
-   * Option B: Averaged reading (smooth, adds latency)
-   *
-   * If sensors are unstable, try averaging (see helper function above)
-   */
+
+  // Pulso azul en standby para indicar que el loop está activo
+  static unsigned long lastPulse = 0;
+  static bool pulseState = false;
+  unsigned long now = millis();
+  if (now - lastPulse > 1000) { // cada 1 segundo
+    if (!pulseState) {
+      neopixel.setPixelColor(0, COLOR_OFF);
+      neopixel.show();
+      pulseState = true;
+      lastPulse = now;
+    } else {
+      neopixel.setPixelColor(0, COLOR_BLUE);
+      neopixel.show();
+      pulseState = false;
+      lastPulse = now;
+    }
+  }
 
   UV_sensor1_value = analogRead(UV_SENSOR1);    // Lamp 1 light level
   UV_sensor2_value = analogRead(UV_SENSOR2);    // Lamp 2 light level
   AC_power_value = analogRead(AC_POWER_PIN);    // AC mains presence
-
-  // Uncomment next 3 lines for noise reduction (comment out direct readings above):
-  // UV_sensor1_value = readAveragedADC(UV_SENSOR1, 4);
-  // UV_sensor2_value = readAveragedADC(UV_SENSOR2, 4);
-  // AC_power_value = readAveragedADC(AC_POWER_PIN, 4);
 
   // ========================================================================
   // STEP 2: CHECK FOR INCOMING LORA PACKETS (REQUEST FROM COORDINATOR)
@@ -342,12 +348,17 @@ void loop() {
   int packetSize = LoRa.parsePacket();
 
   if (packetSize > 0) {
-    // A packet was received. Check if it's valid (must be exactly 4 bytes).
-    
+    // Recibiendo paquete: morado
+    neopixel.setPixelColor(0, COLOR_PURPLE);
+    neopixel.show();
+
     if (packetSize != 4) {
       // Invalid size - discard and flush buffer
       while (LoRa.available()) LoRa.read();
       Serial.println("⚠ Received invalid packet (wrong size)");
+      // Regresa a standby azul
+      neopixel.setPixelColor(0, COLOR_BLUE);
+      neopixel.show();
     } else {
       // Parse the 4-byte request packet
       uint8_t net     = LoRa.read();    // Byte 0: Network ID
@@ -358,57 +369,20 @@ void loop() {
       // ====================================================================
       // STEP 3: VALIDATE REQUEST
       // ====================================================================
-      /*
-       * Check if this request is intended for us by validating:
-       * 1. NET_ID matches (0xA5)
-       * 2. Message type is REQUEST (0x10)
-       * 3. Target ID matches our device ID (TX_ID = 1-9)
-       * 4. Request code is READ_DATA (0x01)
-       *
-       * If ANY check fails, ignore the packet (not for us)
-       */
-
       if (net == NET_ID && type == MSG_REQ && tgtId == TX_ID && req == REQ_READ_DATA) {
-        
-        // ================================================================
-        // STEP 4: EVALUATE SENSOR STATUS
-        // ================================================================
-        /*
-         * Compare current sensor readings against thresholds
-         * Status byte: 0 = OK (normal), 1 = ALERT (problem detected)
-         *
-         * AC_STATUS:
-         *   - 1 (ALERT) if AC_power_value < AC_THRESHOLD (no power)
-         *   - 0 (OK) if AC_power_value >= AC_THRESHOLD (power present)
-         *
-         * UV1_STATUS, UV2_STATUS:
-         *   - 1 (ALERT) if light < UV_THRESHOLD (lamp is off)
-         *   - 0 (OK) if light >= UV_THRESHOLD (lamp is on)
-         */
-
+        // Evaluar sensores
         uint8_t ac_status  = (AC_power_value < AC_THRESHOLD)   ? 1 : 0;
         uint8_t uv1_status = (UV_sensor1_value < UV_THRESHOLD) ? 1 : 0;
         uint8_t uv2_status = (UV_sensor2_value < UV_THRESHOLD) ? 1 : 0;
 
-        // Add random delay to stagger responses from multiple devices
-        // This prevents collision if coordinator queries multiple nodes simultaneously
+        // Espera aleatoria
         delay(random(10, 80));
 
-        // ================================================================
-        // STEP 5: BUILD AND TRANSMIT RESPONSE PACKET
-        // ================================================================
-        /*
-         * Build 8-byte response packet:
-         *   [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC | UV1 | UV2]
-         *
-         * Sequence number (SEQ) is used by coordinator to:
-         *   - Detect duplicate packets
-         *   - Track response latency
-         *   - Correlate responses with requests
-         *
-         * Incremented after each transmission
-         */
+        // Enviando: cyan
+        neopixel.setPixelColor(0, COLOR_CYAN);
+        neopixel.show();
 
+        // Enviar respuesta
         LoRa.beginPacket();
         LoRa.write(NET_ID);                           // Echo network ID
         LoRa.write(MSG_RESP);                         // Message type: Response (0x90)
@@ -420,10 +394,10 @@ void loop() {
         LoRa.write(uv2_status);                       // UV lamp 2 status (0/1)
         LoRa.endPacket();
 
-        // Increment sequence number for next response
+        // Incrementar secuencia
         seq++;
 
-        // Print debug information to Serial Monitor
+        // Debug
         Serial.printf("[Device %d] Response sent (Seq=%d): ", TX_ID, seq-1);
         Serial.printf("AC=%s UV1=%s UV2=%s | Raw: AC=%d UV1=%d UV2=%d\n",
           (ac_status ? "ALERT" : "OK"),
@@ -431,10 +405,17 @@ void loop() {
           (uv2_status ? "ALERT" : "OK"),
           AC_power_value, UV_sensor1_value, UV_sensor2_value);
 
-        // Blink LED to indicate transmission
-        digitalWrite(LED_PIN, LOW);
-        delay(10);
-        digitalWrite(LED_PIN, HIGH);
+        // Fin de envío: verde
+        neopixel.setPixelColor(0, COLOR_GREEN);
+        neopixel.show();
+        delay(100);
+        // Regresa a standby azul
+        neopixel.setPixelColor(0, COLOR_BLUE);
+        neopixel.show();
+      } else {
+        // No es para este nodo, regresa a standby azul
+        neopixel.setPixelColor(0, COLOR_BLUE);
+        neopixel.show();
       }
     }
   }
