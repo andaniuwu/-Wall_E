@@ -235,6 +235,9 @@ void setup() {
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
+  // Initial delay to allow LoRa module to stabilize
+  delay(500);
+
   // Initialize LoRa module with 433 MHz frequency
   // Using standard LoRa parameters for balanced range/speed
   if (!LoRa.begin(433E6)) {
