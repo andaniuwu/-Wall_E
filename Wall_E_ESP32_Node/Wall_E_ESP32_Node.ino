@@ -377,10 +377,7 @@ void loop() {
         uint8_t uv1_status = (UV_sensor1_value < UV_THRESHOLD) ? 1 : 0;
         uint8_t uv2_status = (UV_sensor2_value < UV_THRESHOLD) ? 1 : 0;
 
-        // Espera aleatoria
-        delay(random(10, 80));
-
-        // Enviando: cyan
+        // Enviando: cyan (no delay to prevent missed requests)
         neopixel.setPixelColor(0, COLOR_CYAN);
         neopixel.show();
 
@@ -428,8 +425,8 @@ void loop() {
   // ========================================================================
   // STEP 6: LOOP DELAY
   // ========================================================================
-  // Small delay to avoid busy-waiting while polling LoRa module
-  delay(50);
+  // Minimal delay for faster request polling (5ms for ~200 polls/second)
+  delayMicroseconds(5000);  // 5ms - much faster than 50ms
 }
 
 // ============================================================================
