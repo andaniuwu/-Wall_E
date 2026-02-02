@@ -222,8 +222,8 @@ void setup() {
 
   // Initialize UART serial for debugging output
   Serial.begin(115200);
-  while (!Serial);           // Wait for Serial Monitor to open
-  delay(100);
+  // while (!Serial);           // COMENTADO: Bloqueaba el inicio cuando no hay PC conectada
+  delay(500);                   // Breve espera para que Serial se inicialice si está disponible
   
   // Print startup banner
   Serial.println("\n\n========================================");
