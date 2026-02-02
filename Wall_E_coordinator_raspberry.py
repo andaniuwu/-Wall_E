@@ -90,7 +90,7 @@ REG_PAYLOAD_LENGTH = 0x22
 
 NUM_DEVICES = 9                    # Number of remote nodes (1-9)
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
-RESPONSE_TIMEOUT = 2.0             # Seconds to wait for each response
+RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
 
 # ============================================================================
@@ -281,37 +281,41 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
             irq_flags = spi_read(REG_IRQ_FLAGS)
             # CRC error flag
             if irq_flags & 0x20:
+                print(f"[DEBUG] CRC error detected for device {device_id}, clearing IRQ flags.")
                 spi_write(REG_IRQ_FLAGS, 0xFF)
                 continue
-            
+
             # Check for RxDone flag
             if irq_flags & 0x40:
                 # Read packet
                 nb_bytes = spi_read(REG_RX_NB_BYTES)
-                
+
                 if nb_bytes == 8:  # Expected response size
                     rx_addr = spi_read(REG_FIFO_RX_CURRENT_ADDR)
                     spi_write(REG_FIFO_ADDR_PTR, rx_addr)
-                    
+
                     # Read packet bytes
                     packet = []
                     for i in range(nb_bytes):
                         packet.append(spi_read(REG_FIFO))
-                    
+
                     # Clear interrupt
                     spi_write(REG_IRQ_FLAGS, 0xFF)
                     spi_write(REG_OP_MODE, 0x85)  # Back to RX continuous
-                    
+
+                    print(f"[DEBUG] Received packet from device {device_id}: {packet}")
                     return bytes(packet)
                 else:
+                    print(f"[DEBUG] Unexpected packet size {nb_bytes} from device {device_id}, clearing IRQ.")
                     # Clear IRQ and continue listening
                     spi_write(REG_IRQ_FLAGS, 0xFF)
                     spi_write(REG_OP_MODE, 0x85)
         except Exception as e:
-            pass
-        
+            print(f"[DEBUG] Exception while waiting for response from device {device_id}: {e}")
+
         time.sleep(0.02)
-    
+
+    print(f"[DEBUG] Timeout waiting for response from device {device_id} after {timeout} seconds.")
     return None
 
 # ============================================================================
@@ -354,41 +358,38 @@ def parse_response(packet, device_id):
 def query_device(device_id):
     """Query single device and collect response"""
     print(f"\n  [Device {device_id}] ", end="", flush=True)
-    
-    if send_request(device_id):
-        response_data = wait_response(device_id)
-        
-        if response_data:
-            response = parse_response(response_data, device_id)
-            if response:
-                print(f"✓ Response: AC={STATUS_NAMES[response['ac']]} " +
-                      f"UV1={STATUS_NAMES[response['uv1']]} " +
-                      f"UV2={STATUS_NAMES[response['uv2']]} (Seq={response['seq']})")
-                
-                # Update statistics
-                if device_id not in device_stats:
-                    device_stats[device_id] = {
-                        'responses': 0,
-                        'failures': 0,
-                        'last_status': None
-                    }
-                
-                device_stats[device_id]['responses'] += 1
-                device_stats[device_id]['last_status'] = response
-                
-                return response
+    max_retries = 9  # 10 intentos en total
+    short_timeout = 0.8
+    for attempt in range(1, max_retries + 2):
+        if send_request(device_id):
+            response_data = wait_response(device_id, timeout=short_timeout)
+            if response_data:
+                response = parse_response(response_data, device_id)
+                if response:
+                    print(f"✓ Response: AC={STATUS_NAMES[response['ac']]} " +
+                          f"UV1={STATUS_NAMES[response['uv1']]} " +
+                          f"UV2={STATUS_NAMES[response['uv2']]} (Seq={response['seq']})")
+                    # Update statistics
+                    if device_id not in device_stats:
+                        device_stats[device_id] = {
+                            'responses': 0,
+                            'failures': 0,
+                            'last_status': None
+                        }
+                    device_stats[device_id]['responses'] += 1
+                    device_stats[device_id]['last_status'] = response
+                    return response
+                else:
+                    print("✗ Invalid response format")
             else:
-                print("✗ Invalid response format")
+                print(f"✗ No response (timeout) [Intento {attempt}]")
         else:
-            print("✗ No response (timeout)")
-    else:
-        print("✗ Send failed")
-    
+            print(f"✗ Send failed [Intento {attempt}]")
+        time.sleep(0.2)
     # Update failure count
     if device_id not in device_stats:
         device_stats[device_id] = {'responses': 0, 'failures': 0, 'last_status': None}
     device_stats[device_id]['failures'] += 1
-    
     return None
 
 def query_all_devices():
@@ -398,12 +399,18 @@ def query_all_devices():
     print(f"{'='*70}")
     
     responses = {}
-    for device_id in range(1, NUM_DEVICES + 1):
+    # for device_id in range(1, NUM_DEVICES + 1):
+    #     response = query_device(device_id)
+    #     if response:
+    #         responses[device_id] = response
+    #     
+    #     time.sleep(0.5)  # Delay between requests
+    # Prueba: solo dispositivos 1, 2, 3 y 4
+    for device_id in [1, 2, 3, 4]:
         response = query_device(device_id)
         if response:
             responses[device_id] = response
-        
-        time.sleep(0.5)  # Delay between requests
+        time.sleep(0.5)  # Delay entre consultas
     
     return responses
 
