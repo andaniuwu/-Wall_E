@@ -211,9 +211,9 @@ int AC_power_value = 0;       // AC mains voltage presence (0-4095)
 // ============================================================================
 
 void setup() {
-  // Initialize LED for visual feedback
+  // Initialize LED for visual feedback (continuous ON)
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  digitalWrite(LED_PIN, HIGH); // LED always ON
 
   // Initialize NeoPixel early (used for error/status indicators)
   neopixel.begin();
@@ -320,23 +320,8 @@ int readAveragedADC(uint8_t pin, uint8_t samples = 4) {
 
 void loop() {
 
-  // Pulso azul en standby para indicar que el loop está activo
-  static unsigned long lastPulse = 0;
-  static bool pulseState = false;
-  unsigned long now = millis();
-  if (now - lastPulse > 1000) { // cada 1 segundo
-    if (!pulseState) {
-      neopixel.setPixelColor(0, COLOR_OFF);
-      neopixel.show();
-      pulseState = true;
-      lastPulse = now;
-    } else {
-      neopixel.setPixelColor(0, COLOR_BLUE);
-      neopixel.show();
-      pulseState = false;
-      lastPulse = now;
-    }
-  }
+  // LED stays ON, no blinking
+  digitalWrite(LED_PIN, HIGH);
 
   UV_sensor1_value = analogRead(UV_SENSOR1);    // Lamp 1 light level
   UV_sensor2_value = analogRead(UV_SENSOR2);    // Lamp 2 light level
