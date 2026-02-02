@@ -4,7 +4,7 @@
 Configuration:
   - Number of devices: 9
   - Query interval: 5.0 seconds
-  - Response timeout: 2.0 seconds
+  - Response timeout: 4.0 seconds
   - Frequency: 433.0 MHz
 ======================================================================
 ✓ GPIO initialized and LoRa module reset
@@ -25,401 +25,256 @@ Press Ctrl+C to exit
 
 
 ======================================================================
-Query Cycle: 2026-01-30 01:21:50
+Query Cycle: 2026-02-02 04:04:26
 ======================================================================
 
-  [Device 1] ✗ No response (timeout)
+  [Device 1] [DEBUG] Timeout waiting for response from device 1 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Received packet from device 1: [165, 144, 1, 41, 0, 1, 1, 1]
+✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=41)
 
-  [Device 2] ✗ No response (timeout)
+  [Device 2] [DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
-  [Device 3] ✗ No response (timeout)
+  [Device 3] [DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
+  [Device 4] [DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
 Cycle Summary:
-  - Total responses: 0/9
-  - Alerts: 0
+  - Total responses: 1/9
+  - Alerts: 1
 
 Device Statistics:
-  Device 1: 0 responses, 1 failures (0.0% success)
+  Device 1: 1 responses, 0 failures (100.0% success)
   Device 2: 0 responses, 1 failures (0.0% success)
   Device 3: 0 responses, 1 failures (0.0% success)
   Device 4: 0 responses, 1 failures (0.0% success)
-  Device 5: 0 responses, 1 failures (0.0% success)
-  Device 6: 0 responses, 1 failures (0.0% success)
-  Device 7: 0 responses, 1 failures (0.0% success)
-  Device 8: 0 responses, 1 failures (0.0% success)
-  Device 9: 0 responses, 1 failures (0.0% success)
 
 Waiting 5.0 seconds for next cycle... done
 
 ======================================================================
-Query Cycle: 2026-01-30 01:22:18
+Query Cycle: 2026-02-02 04:05:07
 ======================================================================
 
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=16)
+  [Device 1] [DEBUG] Received packet from device 1: [165, 144, 1, 42, 0, 1, 1, 1]
+✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=42)
 
-  [Device 2] ✗ No response (timeout)
+  [Device 2] [DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
-  [Device 3] ✗ No response (timeout)
+  [Device 3] [DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
+  [Device 4] [DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
 Cycle Summary:
   - Total responses: 1/9
   - Alerts: 1
 
 Device Statistics:
-  Device 1: 1 responses, 1 failures (50.0% success)
+  Device 1: 2 responses, 0 failures (100.0% success)
   Device 2: 0 responses, 2 failures (0.0% success)
   Device 3: 0 responses, 2 failures (0.0% success)
   Device 4: 0 responses, 2 failures (0.0% success)
-  Device 5: 0 responses, 2 failures (0.0% success)
-  Device 6: 0 responses, 2 failures (0.0% success)
-  Device 7: 0 responses, 2 failures (0.0% success)
-  Device 8: 0 responses, 2 failures (0.0% success)
-  Device 9: 0 responses, 2 failures (0.0% success)
 
 Waiting 5.0 seconds for next cycle... done
 
 ======================================================================
-Query Cycle: 2026-01-30 01:22:44
+Query Cycle: 2026-02-02 04:05:46
 ======================================================================
 
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=17)
+  [Device 1] [DEBUG] Received packet from device 1: [165, 144, 1, 43, 0, 1, 1, 1]
+✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=43)
 
-  [Device 2] ✗ No response (timeout)
+  [Device 2] [DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 2 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
-  [Device 3] ✗ No response (timeout)
+  [Device 3] [DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 3 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
+  [Device 4] [DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 1]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 2]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 3]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 4]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 5]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 6]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 7]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 8]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 9]
+[DEBUG] Timeout waiting for response from device 4 after 0.8 seconds.
+✗ No response (timeout) [Intento 10]
 
 Cycle Summary:
   - Total responses: 1/9
   - Alerts: 1
 
 Device Statistics:
-  Device 1: 2 responses, 1 failures (66.7% success)
+  Device 1: 3 responses, 0 failures (100.0% success)
   Device 2: 0 responses, 3 failures (0.0% success)
   Device 3: 0 responses, 3 failures (0.0% success)
   Device 4: 0 responses, 3 failures (0.0% success)
-  Device 5: 0 responses, 3 failures (0.0% success)
-  Device 6: 0 responses, 3 failures (0.0% success)
-  Device 7: 0 responses, 3 failures (0.0% success)
-  Device 8: 0 responses, 3 failures (0.0% success)
-  Device 9: 0 responses, 3 failures (0.0% success)
 
 Waiting 5.0 seconds for next cycle... done
 
 ======================================================================
-Query Cycle: 2026-01-30 01:23:11
+Query Cycle: 2026-02-02 04:06:25
 ======================================================================
 
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=18)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 1/9
-  - Alerts: 1
-
-Device Statistics:
-  Device 1: 3 responses, 1 failures (75.0% success)
-  Device 2: 0 responses, 4 failures (0.0% success)
-  Device 3: 0 responses, 4 failures (0.0% success)
-  Device 4: 0 responses, 4 failures (0.0% success)
-  Device 5: 0 responses, 4 failures (0.0% success)
-  Device 6: 0 responses, 4 failures (0.0% success)
-  Device 7: 0 responses, 4 failures (0.0% success)
-  Device 8: 0 responses, 4 failures (0.0% success)
-  Device 9: 0 responses, 4 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:23:37
-======================================================================
-
-  [Device 1] ✗ No response (timeout)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 0/9
-  - Alerts: 0
-
-Device Statistics:
-  Device 1: 3 responses, 2 failures (60.0% success)
-  Device 2: 0 responses, 5 failures (0.0% success)
-  Device 3: 0 responses, 5 failures (0.0% success)
-  Device 4: 0 responses, 5 failures (0.0% success)
-  Device 5: 0 responses, 5 failures (0.0% success)
-  Device 6: 0 responses, 5 failures (0.0% success)
-  Device 7: 0 responses, 5 failures (0.0% success)
-  Device 8: 0 responses, 5 failures (0.0% success)
-  Device 9: 0 responses, 5 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:24:05
-======================================================================
-
-  [Device 1] ✗ No response (timeout)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 0/9
-  - Alerts: 0
-
-Device Statistics:
-  Device 1: 3 responses, 3 failures (50.0% success)
-  Device 2: 0 responses, 6 failures (0.0% success)
-  Device 3: 0 responses, 6 failures (0.0% success)
-  Device 4: 0 responses, 6 failures (0.0% success)
-  Device 5: 0 responses, 6 failures (0.0% success)
-  Device 6: 0 responses, 6 failures (0.0% success)
-  Device 7: 0 responses, 6 failures (0.0% success)
-  Device 8: 0 responses, 6 failures (0.0% success)
-  Device 9: 0 responses, 6 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:24:33
-======================================================================
-
-  [Device 1] ✗ No response (timeout)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 0/9
-  - Alerts: 0
-
-Device Statistics:
-  Device 1: 3 responses, 4 failures (42.9% success)
-  Device 2: 0 responses, 7 failures (0.0% success)
-  Device 3: 0 responses, 7 failures (0.0% success)
-  Device 4: 0 responses, 7 failures (0.0% success)
-  Device 5: 0 responses, 7 failures (0.0% success)
-  Device 6: 0 responses, 7 failures (0.0% success)
-  Device 7: 0 responses, 7 failures (0.0% success)
-  Device 8: 0 responses, 7 failures (0.0% success)
-  Device 9: 0 responses, 7 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:25:02
-======================================================================
-
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=19)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 1/9
-  - Alerts: 1
-
-Device Statistics:
-  Device 1: 4 responses, 4 failures (50.0% success)
-  Device 2: 0 responses, 8 failures (0.0% success)
-  Device 3: 0 responses, 8 failures (0.0% success)
-  Device 4: 0 responses, 8 failures (0.0% success)
-  Device 5: 0 responses, 8 failures (0.0% success)
-  Device 6: 0 responses, 8 failures (0.0% success)
-  Device 7: 0 responses, 8 failures (0.0% success)
-  Device 8: 0 responses, 8 failures (0.0% success)
-  Device 9: 0 responses, 8 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:25:28
-======================================================================
-
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=20)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 1/9
-  - Alerts: 1
-
-Device Statistics:
-  Device 1: 5 responses, 4 failures (55.6% success)
-  Device 2: 0 responses, 9 failures (0.0% success)
-  Device 3: 0 responses, 9 failures (0.0% success)
-  Device 4: 0 responses, 9 failures (0.0% success)
-  Device 5: 0 responses, 9 failures (0.0% success)
-  Device 6: 0 responses, 9 failures (0.0% success)
-  Device 7: 0 responses, 9 failures (0.0% success)
-  Device 8: 0 responses, 9 failures (0.0% success)
-  Device 9: 0 responses, 9 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:25:54
-======================================================================
-
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=21)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] ✗ No response (timeout)
-
-  [Device 4] ✗ No response (timeout)
-
-  [Device 5] ✗ No response (timeout)
-
-  [Device 6] ✗ No response (timeout)
-
-  [Device 7] ✗ No response (timeout)
-
-  [Device 8] ✗ No response (timeout)
-
-  [Device 9] ✗ No response (timeout)
-
-Cycle Summary:
-  - Total responses: 1/9
-  - Alerts: 1
-
-Device Statistics:
-  Device 1: 6 responses, 4 failures (60.0% success)
-  Device 2: 0 responses, 10 failures (0.0% success)
-  Device 3: 0 responses, 10 failures (0.0% success)
-  Device 4: 0 responses, 10 failures (0.0% success)
-  Device 5: 0 responses, 10 failures (0.0% success)
-  Device 6: 0 responses, 10 failures (0.0% success)
-  Device 7: 0 responses, 10 failures (0.0% success)
-  Device 8: 0 responses, 10 failures (0.0% success)
-  Device 9: 0 responses, 10 failures (0.0% success)
-
-Waiting 5.0 seconds for next cycle... done
-
-======================================================================
-Query Cycle: 2026-01-30 01:26:20
-======================================================================
-
-  [Device 1] ✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=22)
-
-  [Device 2] ✗ No response (timeout)
-
-  [Device 3] 
+  [Device 1] [DEBUG] Received packet from device 1: [165, 144, 1, 44, 0, 1, 1, 1]
+✓ Response: AC=ALERT UV1=ALERT UV2=ALERT (Seq=44)
