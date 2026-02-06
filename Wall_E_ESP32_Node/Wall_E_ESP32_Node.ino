@@ -13,6 +13,13 @@ SYSTEM DESCRIPTION:
   production lines. The system operates at 110Vac and uses ESP32 microcontrollers
   with LoRa communication on 433MHz band.
 
+LAMPS DESCRIPTION:
+  - UV lamps are used for disinfection air in production lines
+  - Model: Microbial Area Kleaner MAK-414: It seems to has 4 UV lamps per unit, works at 110Vac, 4.2A current in total (1.05A per lamp)
+  - Each lamp has a current sensor (SCT-013-030) to monitor its operation
+  - AC voltage sensor (ZMPT101B) detects presence/absence of mains power
+
+
 ARCHITECTURE:
   - Central Hub: Raspberry Pi 4 (receiver/coordinator)
   - Remote Nodes: Up to 9 ESP32 units (transmitters/responders)
@@ -20,16 +27,16 @@ ARCHITECTURE:
   - Protocol: Request/Response with acknowledgment
 
 MONITORING CAPABILITIES:
-  1. UV Lamp Status (ON/OFF) using light sensors
-  2. AC Power Presence/Absence detection
-  3. Multi-sensor support (up to 2 UV lamps per node)
+  1. AC Current Monitoring (4x SCT-013-030 current transformers)
+  2. AC Power Presence/Absence detection (ZMPT101B voltage sensor)
+  3. Multi-sensor support (4 current channels per node)
   4. Automatic status reporting on request
 
 HARDWARE COMPONENTS:
   - ESP32-S3 WROOM DevKit microcontroller
   - SX1278 LoRa module (433MHz)
-  - Light sensors for UV detection (photoresistor or photodiode)
-  - AC power monitor (ZMPT101B or similar)
+  - 4x SCT-013-030 Current Transformers (AC current monitoring)
+  - AC voltage monitor (ZMPT101B voltage sensor)
   - Power supply (5V/USB for ESP32, 3.3V for LoRa)
   - Industrial-grade enclosure
 
@@ -42,14 +49,16 @@ COMMUNICATION PROTOCOL:
     - REQ_CODE: 0x01 (read sensor data)
 
   Response Packet (from ESP32):
-    [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_STATUS | UV1_STATUS | UV2_STATUS]
+    [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_mA | CURR2_mA | CURR3_mA | CURR4_mA]
     - NET_ID: Echo network ID
     - MSG_RESP: Message type = 0x90 (response)
     - DEVICE_ID: 1-9 (sender device ID)
     - SEQ: 16-bit sequence number for tracking
-    - AC_STATUS: 0=OK, 1=NO_POWER
-    - UV1_STATUS: 0=OK, 1=NO_LIGHT
-    - UV2_STATUS: 0=OK, 1=NO_LIGHT
+    - AC_V_SCALED: Voltage scaled 0-255 (maps to 0-130V RMS)
+    - CURR1_mA: Current scaled 0-255 (maps to 0-2550 mA)
+    - CURR2_mA: Current scaled 0-255 (maps to 0-2550 mA)
+    - CURR3_mA: Current scaled 0-255 (maps to 0-2550 mA)
+    - CURR4_mA: Current scaled 0-255 (maps to 0-2550 mA)
 
 STATUS CODES:
   0 = OK (device/lamp working normally)
@@ -60,14 +69,15 @@ OPERATION FLOW:
   2. Continuously monitors sensor values (ADC pins)
   3. When request arrives, validates NET_ID and TARGET_ID
   4. If match found, reads current sensor values
-  5. Determines status (OK/ALERT based on thresholds)
+  5. Scales sensor values to 8-bit format for transmission
   6. Sends response packet back to coordinator
   7. Returns to listening mode
 
 ADJUSTMENTS PER INSTALLATION:
-  - TX_ID: Set to 1-9 for each device (see line 79)
-  - UV_threshold: Adjust based on sensor calibration (line 129)
-  - AC_threshold: Adjust based on AC sensor calibration (line 133)
+  - TX_ID: Set to 1-9 for each device
+  - CURRENT_THRESHOLD_MIN: Adjust based on lamp specifications (default 0.5A)
+  - CURRENT_THRESHOLD_MAX: Adjust based on lamp specifications (default 1.2A)
+  - AC_VOLTAGE_THRESHOLD: Alert if < 100V RMS (default)
   - LoRa frequency: Use 433E6 (Asia), 866E6 (Europe), 915E6 (Americas)
 
 ================================================================================
@@ -109,10 +119,13 @@ ADJUSTMENTS PER INSTALLATION:
 // HARDWARE PIN CONFIGURATION (ESP32)
 // ============================================================================
 
-// ---- ADC Sensor Pins ----
-#define UV_SENSOR1      34    // ADC1_CH6 (input only) - Main UV lamp sensor
-#define UV_SENSOR2      35    // ADC1_CH7 (input only) - Secondary UV lamp sensor
-#define AC_POWER_PIN    32    // ADC1_CH4 - AC presence detector (ZMPT101B or similar)
+// ---- ADC Sensor Pins (ESP32-S3 ADC1 channels) ----
+// Valid ADC1 pins on ESP32-S3: GPIO0-8, GPIO14-15
+#define CURRENT_SENSOR1 4     // GPIO4 (ADC1_CH3) - SCT-013-030 Channel 1
+#define CURRENT_SENSOR2 5     // GPIO5 (ADC1_CH4) - SCT-013-030 Channel 2
+#define CURRENT_SENSOR3 6     // GPIO6 (ADC1_CH5) - SCT-013-030 Channel 3
+#define CURRENT_SENSOR4 7     // GPIO7 (ADC1_CH6) - SCT-013-030 Channel 4
+#define AC_POWER_PIN    15    // GPIO15 (ADC1_CH14) - AC voltage detector (ZMPT101B)
 
 // ---- LoRa Module Pins (SX1278/RFM95) ----
 #define LORA_SCK        12    // GPIO12 (Pin 19)
@@ -168,17 +181,54 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 #define REQ_READ_DATA   0x01  // Request code: Read sensor data
 
 // ============================================================================
+// SENSOR CALIBRATION & CONVERSION
+// ============================================================================
+/*
+ * SCT-013-030 Current Sensor Calibration:
+ *   - Sensor ratio: 30A / 1V (output)
+ *   - At 1A nominal: outputs ~33.3mV (with signal conditioning)
+ *   - ESP32-S3 ADC: 12-bit (0-4095 = 0-3.3V)
+ *   - ADC resolution: 3.3V / 4095 = 0.8056 mV per step
+ *
+ * ZMPT101B AC Voltage Sensor Calibration:
+ *   - Input: 120V RMS AC mains
+ *   - Peak voltage: 120V RMS × √2 = 169.7V peak
+ *   - DC Offset: Fixed 1.65V (mid-point of 3.3V)
+ *   - ADC output range: 1.36V min to 2.0V max
+ *   - Peak AC voltage: (2.0V - 1.36V) / 2 = 0.32V peak
+ *   - RMS AC voltage: 0.32V peak / √2 = 0.226V RMS
+ *   - Conversion ratio: 120V RMS / 0.226V RMS = 531 V/V
+ *   - Alert threshold: < 100V RMS
+ *   
+ * IMPORTANT: Both sensors use AC voltage oscillating around a DC center point.
+ * Measurement process:
+ *   1. Sample 30 times (~1-2ms, appropriate for 50/60Hz AC)
+ *   2. Remove DC offset from each sample
+ *   3. Calculate RMS: sqrt(sum of squares / number of samples)
+ *   4. Convert RMS to actual measurement (current in A, or voltage in V)
+ */
+
+#define ADC_SAMPLES 30        // Number of samples for RMS calculation
+#define VREF_mV 1650          // Reference voltage (mid-point: 3.3V/2)
+#define CURRENT_RATIO 30      // SCT-013-030 ratio: 30A per 1V
+#define VOLTAGE_RATIO 531     // ZMPT101B conversion: 531 V/V (120V RMS / 0.226V RMS)
+
+// Current sensor readings (RMS values in Amperes)
+float current_sensor1_A = 0.0;
+float current_sensor2_A = 0.0;
+float current_sensor3_A = 0.0;
+float current_sensor4_A = 0.0;
+float AC_voltage_V = 0.0;     // AC voltage in Volts RMS
+
+// ============================================================================
 // SENSOR THRESHOLDS
 // ============================================================================
 /*
- * ADC values are 0-4095 (12-bit resolution on ESP32).
- * Adjust these based on YOUR sensor calibration:
- *
- * UV_THRESHOLD:
- *   - Light sensor reading when UV lamp is ON
- *   - If ADC < threshold → Lamp is OFF (ALERT)
- *   - If ADC ≥ threshold → Lamp is ON (OK)
- *   - Typical range: 1500-3000 depending on sensor type
+ * CURRENT_THRESHOLD_MIN / CURRENT_THRESHOLD_MAX (in Amperes):
+ *   - Based on expected lamp current consumption
+ *   - If measured current < MIN or > MAX → ALERT
+ *   - If MIN ≤ measured current ≤ MAX → OK
+ *   - For UV lamps: typical range 0.5A to 1.0A
  *
  * AC_THRESHOLD:
  *   - ZMPT101B voltage monitoring output
@@ -187,26 +237,22 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
  *   - Typical range: 1500-2500 depending on circuit
  *
  * CALIBRATION PROCEDURE:
- * 1. Upload this code with high thresholds (3000)
+ * 1. Upload this code with debug enabled
  * 2. Open Serial Monitor (Tools → Serial Monitor, 115200 baud)
- * 3. Note "Raw: AC=XXXX UV1=XXXX UV2=XXXX" values in normal operation
- * 4. Set threshold to slightly below normal value
- * 5. Re-upload and test
+ * 3. Monitor "Current: CURR1=XXX.XXmA CURR2=XXX.XXmA ..." values with normal loads
+ * 4. Set MIN/MAX thresholds to bracket normal operation
+ * 5. Test with faulty/missing lamps to verify ALERT state
  */
 
-int UV_THRESHOLD = 2000;      // Adjust based on your sensor
-int AC_THRESHOLD = 2000;      // Adjust based on your ZMPT101B circuit
+float CURRENT_THRESHOLD_MIN = 0.5;   // Minimum acceptable current (Amperes)
+float CURRENT_THRESHOLD_MAX = 1.2;   // Maximum acceptable current (Amperes)
+float AC_VOLTAGE_THRESHOLD = 100.0;  // Minimum acceptable voltage (Volts RMS) - Alert if < 100V
 
 // ============================================================================
 // GLOBAL VARIABLES
 // ============================================================================
 
 uint16_t seq = 0;             // Response sequence counter (incremented each reply)
-
-// Current sensor readings (updated each loop iteration)
-int UV_sensor1_value = 0;     // Lamp 1 light intensity (0-4095)
-int UV_sensor2_value = 0;     // Lamp 2 light intensity (0-4095)
-int AC_power_value = 0;       // AC mains voltage presence (0-4095)
 
 // ============================================================================
 // SETUP FUNCTION - Initialization (runs once at power-on/reset)
@@ -283,6 +329,96 @@ void setup() {
 }
 
 // ============================================================================
+// HELPER FUNCTION - RMS Calculation for AC Current Measurement
+// ============================================================================
+/*
+ * Samples an ADC pin multiple times and calculates RMS (Root Mean Square) value.
+ * RMS is the effective AC voltage, which converts to current via the sensor ratio.
+ * 
+ * PARAMETERS:
+ *   pin: ADC pin to sample
+ *   samples: Number of samples to take (default 30)
+ *   
+ * RETURNS:
+ *   Current in Amperes (RMS)
+ *   
+ * TIMING:
+ *   ~30 samples = ~1-2ms (appropriate for 50/60Hz AC sampling)
+ */
+float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
+  long sumSquares = 0;
+  
+  // Take samples and accumulate squared values
+  for (uint16_t i = 0; i < samples; i++) {
+    int rawADC = analogRead(pin);
+    
+    // Convert ADC to mV (0-4095 → 0-3300mV)
+    float voltage_mV = (rawADC * 3300.0) / 4095.0;
+    
+    // Remove DC offset (center around 0)
+    float ac_voltage = voltage_mV - VREF_mV;
+    
+    // Accumulate squares for RMS calculation
+    sumSquares += (long)(ac_voltage * ac_voltage);
+    
+    delayMicroseconds(100);  // Small delay between samples
+  }
+  
+  // Calculate RMS: sqrt(sum of squares / number of samples)
+  float rms_voltage_mV = sqrt(sumSquares / (float)samples);
+  
+  // Convert RMS voltage to current using sensor ratio
+  float current_A = (rms_voltage_mV / 1000.0) * CURRENT_RATIO;
+  
+  return current_A;
+}
+
+// ============================================================================
+// HELPER FUNCTION - RMS Calculation for AC Voltage Measurement (ZMPT101B)
+// ============================================================================
+/*
+ * Samples ZMPT101B pin multiple times and calculates RMS voltage value.
+ * ZMPT101B has fixed 1.65V DC offset with AC signal modulation.
+ * 
+ * PARAMETERS:
+ *   pin: ADC pin to sample
+ *   samples: Number of samples to take (default 30)
+ *   
+ * RETURNS:
+ *   Voltage in Volts RMS (0-120V range)
+ *   
+ * TIMING:
+ *   ~30 samples = ~1-2ms (appropriate for 50/60Hz AC sampling)
+ */
+float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
+  long sumSquares = 0;
+  
+  // Take samples and accumulate squared values
+  for (uint16_t i = 0; i < samples; i++) {
+    int rawADC = analogRead(pin);
+    
+    // Convert ADC to mV (0-4095 → 0-3300mV)
+    float voltage_mV = (rawADC * 3300.0) / 4095.0;
+    
+    // Remove DC offset (center around 0)
+    float ac_voltage = voltage_mV - VREF_mV;
+    
+    // Accumulate squares for RMS calculation
+    sumSquares += (long)(ac_voltage * ac_voltage);
+    
+    delayMicroseconds(100);  // Small delay between samples
+  }
+  
+  // Calculate RMS: sqrt(sum of squares / number of samples)
+  float rms_voltage_mV = sqrt(sumSquares / (float)samples);
+  
+  // Convert RMS voltage to actual mains voltage using calibration ratio
+  float voltage_V = (rms_voltage_mV / 1000.0) * VOLTAGE_RATIO;
+  
+  return voltage_V;
+}
+
+// ============================================================================
 // HELPER FUNCTION - Optional ADC Averaging (reduce noise)
 // ============================================================================
 /*
@@ -304,6 +440,31 @@ int readAveragedADC(uint8_t pin, uint8_t samples = 4) {
     delayMicroseconds(200);  // Small delay for ADC to settle
   }
   return (int)(sum / samples);
+}
+
+// ============================================================================
+// SCALING FUNCTIONS - Convert measurements to 8-bit packed format
+// ============================================================================
+/*
+ * Option 1: Minimal packet format
+ * - Voltage: 0-255 represents 0-130V RMS (0.51 V/step)
+ * - Current: 0-255 represents 0-2550 mA (10 mA/step)
+ *
+ * This allows coordinator to display actual measurements within 10-byte packet
+ */
+
+uint8_t scale_voltage(float voltage_V) {
+  // Map 0-130V RMS to 0-255
+  if (voltage_V < 0) return 0;
+  if (voltage_V > 130.0) return 255;
+  return (uint8_t)((voltage_V / 130.0) * 255.0);
+}
+
+uint8_t scale_current(float current_mA) {
+  // Map 0-2550 mA to 0-255
+  if (current_mA < 0) return 0;
+  if (current_mA > 2550.0) return 255;
+  return (uint8_t)((current_mA / 2550.0) * 255.0);
 }
 
 // ============================================================================
@@ -340,9 +501,15 @@ void loop() {
     }
   }
 
-  UV_sensor1_value = analogRead(UV_SENSOR1);    // Lamp 1 light level
-  UV_sensor2_value = analogRead(UV_SENSOR2);    // Lamp 2 light level
-  AC_power_value = analogRead(AC_POWER_PIN);    // AC mains presence
+  current_sensor1_A = readRMS_and_convertToCurrent(CURRENT_SENSOR1);
+  current_sensor2_A = readRMS_and_convertToCurrent(CURRENT_SENSOR2);
+  current_sensor3_A = readRMS_and_convertToCurrent(CURRENT_SENSOR3);
+  current_sensor4_A = readRMS_and_convertToCurrent(CURRENT_SENSOR4);
+  AC_voltage_V = readRMS_and_convertToVoltage(AC_POWER_PIN);
+  
+  // Print readings to serial monitor for monitoring
+  Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
+    current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
 
   // ========================================================================
   // STEP 2: CHECK FOR INCOMING LORA PACKETS (REQUEST FROM COORDINATOR)
@@ -389,10 +556,12 @@ void loop() {
       // STEP 3: VALIDATE REQUEST
       // ====================================================================
       if (net == NET_ID && type == MSG_REQ && tgtId == TX_ID && req == REQ_READ_DATA) {
-        // Evaluar sensores
-        uint8_t ac_status  = (AC_power_value < AC_THRESHOLD)   ? 1 : 0;
-        uint8_t uv1_status = (UV_sensor1_value < UV_THRESHOLD) ? 1 : 0;
-        uint8_t uv2_status = (UV_sensor2_value < UV_THRESHOLD) ? 1 : 0;
+        // Scale measurements to 8-bit format for transmission
+        uint8_t ac_v_scaled = scale_voltage(AC_voltage_V);
+        uint8_t curr1_scaled = scale_current(current_sensor1_A * 1000.0);  // Convert A to mA
+        uint8_t curr2_scaled = scale_current(current_sensor2_A * 1000.0);
+        uint8_t curr3_scaled = scale_current(current_sensor3_A * 1000.0);
+        uint8_t curr4_scaled = scale_current(current_sensor4_A * 1000.0);
 
         // Espera aleatoria
         delay(random(10, 80));
@@ -401,29 +570,32 @@ void loop() {
         neopixel.setPixelColor(0, COLOR_CYAN);
         neopixel.show();
 
-        // Enviar respuesta
+        // Build and send response (10-byte packet with scaled values)
         LoRa.beginPacket();
         LoRa.write(NET_ID);                           // Echo network ID
         LoRa.write(MSG_RESP);                         // Message type: Response (0x90)
         LoRa.write(TX_ID);                            // Our device ID
         LoRa.write((uint8_t)(seq & 0xFF));            // Sequence number (low byte)
         LoRa.write((uint8_t)((seq >> 8) & 0xFF));     // Sequence number (high byte)
-        LoRa.write(ac_status);                        // AC power status (0/1)
-        LoRa.write(uv1_status);                       // UV lamp 1 status (0/1)
-        LoRa.write(uv2_status);                       // UV lamp 2 status (0/1)
+        LoRa.write(ac_v_scaled);                      // Scaled AC voltage (0-255 = 0-130V RMS)
+        LoRa.write(curr1_scaled);                     // Scaled current 1 (0-255 = 0-2550 mA)
+        LoRa.write(curr2_scaled);                     // Scaled current 2 (0-255 = 0-2550 mA)
+        LoRa.write(curr3_scaled);                     // Scaled current 3 (0-255 = 0-2550 mA)
+        LoRa.write(curr4_scaled);                     // Scaled current 4 (0-255 = 0-2550 mA)
         LoRa.endPacket();
         LoRa.receive(); // Ensure radio returns to RX mode
 
         // Incrementar secuencia
         seq++;
 
-        // Debug
+        // Debug output
         Serial.printf("[Device %d] Response sent (Seq=%d): ", TX_ID, seq-1);
-        Serial.printf("AC=%s UV1=%s UV2=%s | Raw: AC=%d UV1=%d UV2=%d\n",
-          (ac_status ? "ALERT" : "OK"),
-          (uv1_status ? "ALERT" : "OK"),
-          (uv2_status ? "ALERT" : "OK"),
-          AC_power_value, UV_sensor1_value, UV_sensor2_value);
+        Serial.printf("AC=%.1fV(%d) CURR1=%.2fA(%d) CURR2=%.2fA(%d) CURR3=%.2fA(%d) CURR4=%.2fA(%d)\n",
+          AC_voltage_V, ac_v_scaled,
+          current_sensor1_A, curr1_scaled,
+          current_sensor2_A, curr2_scaled,
+          current_sensor3_A, curr3_scaled,
+          current_sensor4_A, curr4_scaled);
 
         // Fin de envío: verde
         neopixel.setPixelColor(0, COLOR_GREEN);

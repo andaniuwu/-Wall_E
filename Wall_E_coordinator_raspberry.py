@@ -15,7 +15,8 @@ for the Wall-E monitoring system. It:
 
 PROTOCOL:
   Request: [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
-  Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC | UV1 | UV2]
+  Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_mA | CURR2_mA | CURR3_mA | CURR4_mA]
+           where scaled values: 0-255 = voltage 0-130V RMS, current 0-2550 mA per channel
 
 HARDWARE:
   - LoRa module: SX1278 on 433MHz
@@ -100,11 +101,6 @@ FREQUENCY = 433E6                  # LoRa frequency (Hz)
 spi = None
 last_response = {}                 # Track last response from each device
 device_stats = {}                  # Statistics for each device
-
-# Status definitions
-STATUS_OK = 0
-STATUS_ALERT = 1
-STATUS_NAMES = {0: "OK", 1: "ALERT"}
 
 # ============================================================================
 # SPI COMMUNICATION FUNCTIONS
@@ -272,6 +268,14 @@ def send_request(device_id):
 # RECEPTION FUNCTIONS
 # ============================================================================
 
+def unscale_voltage(scaled_value):
+    """Convert 8-bit scaled value back to voltage (0-255 = 0-130V RMS)"""
+    return (scaled_value / 255.0) * 130.0
+
+def unscale_current(scaled_value):
+    """Convert 8-bit scaled value back to current in mA (0-255 = 0-2550 mA)"""
+    return (scaled_value / 255.0) * 2550.0
+
 def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
     """Wait for response from specific device"""
     start_time = time.time()
@@ -290,7 +294,7 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
                 # Read packet
                 nb_bytes = spi_read(REG_RX_NB_BYTES)
 
-                if nb_bytes == 8:  # Expected response size
+                if nb_bytes == 10:  # Expected response size (now 10 bytes with 4 current sensors)
                     rx_addr = spi_read(REG_FIFO_RX_CURRENT_ADDR)
                     spi_write(REG_FIFO_ADDR_PTR, rx_addr)
 
@@ -323,8 +327,8 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
 # ============================================================================
 
 def parse_response(packet, device_id):
-    """Parse 8-byte response packet"""
-    if len(packet) != 8:
+    """Parse 10-byte response packet with scaled sensor values"""
+    if len(packet) != 10:
         return None
     
     net_id = packet[0]
@@ -332,9 +336,11 @@ def parse_response(packet, device_id):
     resp_id = packet[2]
     seq_lo = packet[3]
     seq_hi = packet[4]
-    ac_status = packet[5]
-    uv1_status = packet[6]
-    uv2_status = packet[7]
+    ac_v_scaled = packet[5]
+    curr1_scaled = packet[6]
+    curr2_scaled = packet[7]
+    curr3_scaled = packet[8]
+    curr4_scaled = packet[9]
     
     # Validate response
     if net_id != NET_ID or msg_type != MSG_RESP or resp_id != device_id:
@@ -342,12 +348,21 @@ def parse_response(packet, device_id):
     
     seq = (seq_hi << 8) | seq_lo
     
+    # Unscale values to actual measurements
+    ac_voltage_V = unscale_voltage(ac_v_scaled)
+    curr1_mA = unscale_current(curr1_scaled)
+    curr2_mA = unscale_current(curr2_scaled)
+    curr3_mA = unscale_current(curr3_scaled)
+    curr4_mA = unscale_current(curr4_scaled)
+    
     return {
         'device_id': resp_id,
         'seq': seq,
-        'ac': ac_status,
-        'uv1': uv1_status,
-        'uv2': uv2_status,
+        'ac_voltage_V': ac_voltage_V,
+        'curr1_mA': curr1_mA,
+        'curr2_mA': curr2_mA,
+        'curr3_mA': curr3_mA,
+        'curr4_mA': curr4_mA,
         'timestamp': datetime.now()
     }
 
@@ -366,9 +381,11 @@ def query_device(device_id):
             if response_data:
                 response = parse_response(response_data, device_id)
                 if response:
-                    print(f"✓ Response: AC={STATUS_NAMES[response['ac']]} " +
-                          f"UV1={STATUS_NAMES[response['uv1']]} " +
-                          f"UV2={STATUS_NAMES[response['uv2']]} (Seq={response['seq']})")
+                    print(f"✓ AC={response['ac_voltage_V']:.1f}V " +
+                          f"I1={response['curr1_mA']:.0f}mA " +
+                          f"I2={response['curr2_mA']:.0f}mA " +
+                          f"I3={response['curr3_mA']:.0f}mA " +
+                          f"I4={response['curr4_mA']:.0f}mA (Seq={response['seq']})")
                     # Update statistics
                     if device_id not in device_stats:
                         device_stats[device_id] = {
@@ -399,18 +416,11 @@ def query_all_devices():
     print(f"{'='*70}")
     
     responses = {}
-    # for device_id in range(1, NUM_DEVICES + 1):
-    #     response = query_device(device_id)
-    #     if response:
-    #         responses[device_id] = response
-    #     
-    #     time.sleep(0.5)  # Delay between requests
-    # Prueba: solo dispositivos 1, 2, 3 y 4
-    for device_id in [1, 2, 3, 4]:
+    for device_id in range(1, NUM_DEVICES + 1):
         response = query_device(device_id)
         if response:
             responses[device_id] = response
-        time.sleep(0.5)  # Delay entre consultas
+        time.sleep(0.5)  # Delay between requests
     
     return responses
 
@@ -455,7 +465,17 @@ def main():
             # Print summary
             print(f"\nCycle Summary:")
             print(f"  - Total responses: {len(responses)}/{NUM_DEVICES}")
-            print(f"  - Alerts: {sum(1 for r in responses.values() if r['ac'] or r['uv1'] or r['uv2'])}")
+            
+            # Check for alerts (voltage < 100V or current < 500mA or > 1200mA)
+            alerts = 0
+            for r in responses.values():
+                if (r['ac_voltage_V'] < 100.0 or
+                    r['curr1_mA'] < 500 or r['curr1_mA'] > 1200 or
+                    r['curr2_mA'] < 500 or r['curr2_mA'] > 1200 or
+                    r['curr3_mA'] < 500 or r['curr3_mA'] > 1200 or
+                    r['curr4_mA'] < 500 or r['curr4_mA'] > 1200):
+                    alerts += 1
+            print(f"  - Alerts: {alerts}")
             
             # Print device statistics
             print(f"\nDevice Statistics:")
