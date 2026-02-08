@@ -105,6 +105,13 @@ Future tests:
 - ✓ 433 MHz configuration: Working
 - ⏳ Full end-to-end testing: Pending (hardware transmitter)
 
+## Current Sensor Notes
+
+- SCT-013-030 (30A:1V) is read using calibrated millivolts and ADC 11dB attenuation.
+- Use `analogReadMilliVolts()` and measure `VREF_mV` at the ADC input (DC offset).
+- ADC sampling increased for stability; moving average is per-channel.
+- `CURRENT_FLOOR_A` clamps small idle noise to 0A.
+
 ## Development Branch
 
 This code is being developed on the `feature/lora-implementation` branch.

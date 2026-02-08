@@ -46,7 +46,7 @@ Byte 3: REQ_CODE = 0x01 (READ_SENSOR_DATA)
 ```
 
 #### Response Packet (Node → Coordinator)
-**Size: 8 bytes**
+**Size: 10 bytes**
 
 ```
 Byte 0: NET_ID (0xA5)
@@ -54,15 +54,17 @@ Byte 1: MSG_TYPE = 0x90 (RESPONSE)
 Byte 2: DEVICE_ID (1-9, sender device)
 Byte 3: SEQ_LO (sequence number low byte)
 Byte 4: SEQ_HI (sequence number high byte)
-Byte 5: AC_STATUS (0=OK, 1=ALERT)
-Byte 6: UV1_STATUS (0=OK, 1=ALERT)
-Byte 7: UV2_STATUS (0=OK, 1=ALERT)
+Byte 5: AC_V_SCALED (0-255 = 0-130V RMS)
+Byte 6: CURR1_mA_SCALED (0-255 = 0-2550 mA)
+Byte 7: CURR2_mA_SCALED (0-255 = 0-2550 mA)
+Byte 8: CURR3_mA_SCALED (0-255 = 0-2550 mA)
+Byte 9: CURR4_mA_SCALED (0-255 = 0-2550 mA)
 ```
 
-**Example**: Device #3 responding with all sensors OK, sequence #42
+**Example**: Device #3 responding with scaled values, sequence #42
 ```
-0xA5 0x90 0x03 0x2A 0x00 0x00 0x00 0x00
-              seq=42^  ^AC  ^UV1  ^UV2
+0xA5 0x90 0x03 0x2A 0x00 0x96 0x28 0x00 0x00 0x00
+              seq=42^  ^AC  ^I1  ^I2  ^I3  ^I4
 ```
 
 ## Status Codes
@@ -104,6 +106,12 @@ Byte 7: UV2_STATUS (0=OK, 1=ALERT)
    - Note the "Raw:" values when lamps are ON
    - Set threshold to ~500 below the normal-operation value
    - Re-upload and test
+
+4. **Current Sensor Calibration (SCT-013-030)**:
+   - Use `analogReadMilliVolts()` and set ADC attenuation to 11dB.
+   - Measure `VREF_mV` at the ADC input (DC offset) and update the constant.
+   - Increase `ADC_SAMPLES` if readings are noisy.
+   - Keep `CURRENT_FLOOR_A` small (0.10A) to suppress idle noise.
 
 ### For Raspberry Pi Coordinator
 

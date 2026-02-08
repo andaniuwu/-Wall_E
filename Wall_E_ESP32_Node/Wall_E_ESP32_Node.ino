@@ -208,17 +208,34 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
  *   4. Convert RMS to actual measurement (current in A, or voltage in V)
  */
 
-#define ADC_SAMPLES 30        // Number of samples for RMS calculation
-#define VREF_mV 1650          // Reference voltage (mid-point: 3.3V/2)
+#define ADC_SAMPLES 200       // Number of samples for RMS calculation (increased for stability)
+#define VREF_mV 1640          // Reference voltage (measured at ADC input: ~1.64V)
 #define CURRENT_RATIO 30      // SCT-013-030 ratio: 30A per 1V
 #define VOLTAGE_RATIO 531     // ZMPT101B conversion: 531 V/V (120V RMS / 0.226V RMS)
+#define CURRENT_FLOOR_A 0.10  // Readings below 0.10A are clamped to 0A (noise suppression)
 
 // Current sensor readings (RMS values in Amperes)
 float current_sensor1_A = 0.0;
 float current_sensor2_A = 0.0;
 float current_sensor3_A = 0.0;
 float current_sensor4_A = 0.0;
+
+// Moving average filter for smoothing (10-sample average)
+#define FILTER_SAMPLES 10
+float filter_curr1[FILTER_SAMPLES] = {0};
+float filter_curr2[FILTER_SAMPLES] = {0};
+float filter_curr3[FILTER_SAMPLES] = {0};
+float filter_curr4[FILTER_SAMPLES] = {0};
+uint8_t filter_index1 = 0;
+uint8_t filter_index2 = 0;
+uint8_t filter_index3 = 0;
+uint8_t filter_index4 = 0;
+
+// DEBUG variables for diagnostics
+float debug_raw_adc_avg = 0;
+float debug_rms_curr1 = 0;
 float AC_voltage_V = 0.0;     // AC voltage in Volts RMS
+
 
 // ============================================================================
 // SENSOR THRESHOLDS
@@ -272,6 +289,14 @@ void setup() {
   Serial.begin(115200);
   // while (!Serial);           // COMENTADO: Bloqueaba el inicio cuando no hay PC conectada
   delay(500);                   // Breve espera para que Serial se inicialice si está disponible
+
+  // Calibrate ADC for accurate millivolt readings
+  analogReadResolution(12);
+  analogSetPinAttenuation(CURRENT_SENSOR1, ADC_11db);
+  analogSetPinAttenuation(CURRENT_SENSOR2, ADC_11db);
+  analogSetPinAttenuation(CURRENT_SENSOR3, ADC_11db);
+  analogSetPinAttenuation(CURRENT_SENSOR4, ADC_11db);
+  analogSetPinAttenuation(AC_POWER_PIN, ADC_11db);
   
   // Print startup banner
   Serial.println("\n\n========================================");
@@ -329,6 +354,27 @@ void setup() {
 }
 
 // ============================================================================
+// HELPER FUNCTION - Moving Average Filter
+// ============================================================================
+/*
+ * Applies a moving average low-pass filter to smooth noisy sensor readings.
+ * Reduces oscillations without significantly delaying response.
+ */
+float applyMovingAverage(float newValue, float buffer[FILTER_SAMPLES], uint8_t &index) {
+  // Store new value in circular buffer
+  buffer[index] = newValue;
+  index = (index + 1) % FILTER_SAMPLES;
+  
+  // Calculate average
+  float sum = 0;
+  for (uint8_t i = 0; i < FILTER_SAMPLES; i++) {
+    sum += buffer[i];
+  }
+  return sum / FILTER_SAMPLES;
+}
+
+
+// ============================================================================
 // HELPER FUNCTION - RMS Calculation for AC Current Measurement
 // ============================================================================
 /*
@@ -347,13 +393,15 @@ void setup() {
  */
 float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
   long sumSquares = 0;
+  long sum_mV = 0;
   
   // Take samples and accumulate squared values
   for (uint16_t i = 0; i < samples; i++) {
-    int rawADC = analogRead(pin);
-    
-    // Convert ADC to mV (0-4095 → 0-3300mV)
-    float voltage_mV = (rawADC * 3300.0) / 4095.0;
+    int raw_mV = analogReadMilliVolts(pin);
+    sum_mV += raw_mV;
+
+    // ADC already returns millivolts when using analogReadMilliVolts
+    float voltage_mV = raw_mV;
     
     // Remove DC offset (center around 0)
     float ac_voltage = voltage_mV - VREF_mV;
@@ -366,6 +414,13 @@ float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
   
   // Calculate RMS: sqrt(sum of squares / number of samples)
   float rms_voltage_mV = sqrt(sumSquares / (float)samples);
+
+  
+  // Store debug info for CURR1
+  if (pin == CURRENT_SENSOR1) {
+    debug_raw_adc_avg = sum_mV / (float)samples;
+    debug_rms_curr1 = rms_voltage_mV;
+  }
   
   // Convert RMS voltage to current using sensor ratio
   float current_A = (rms_voltage_mV / 1000.0) * CURRENT_RATIO;
@@ -395,10 +450,10 @@ float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
   
   // Take samples and accumulate squared values
   for (uint16_t i = 0; i < samples; i++) {
-    int rawADC = analogRead(pin);
-    
-    // Convert ADC to mV (0-4095 → 0-3300mV)
-    float voltage_mV = (rawADC * 3300.0) / 4095.0;
+    int raw_mV = analogReadMilliVolts(pin);
+
+    // ADC already returns millivolts when using analogReadMilliVolts
+    float voltage_mV = raw_mV;
     
     // Remove DC offset (center around 0)
     float ac_voltage = voltage_mV - VREF_mV;
@@ -507,9 +562,27 @@ void loop() {
   current_sensor4_A = readRMS_and_convertToCurrent(CURRENT_SENSOR4);
   AC_voltage_V = readRMS_and_convertToVoltage(AC_POWER_PIN);
   
-  // Print readings to serial monitor for monitoring
-  Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
-    current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
+  // Apply moving average filter to smooth readings
+  current_sensor1_A = applyMovingAverage(current_sensor1_A, filter_curr1, filter_index1);
+  current_sensor2_A = applyMovingAverage(current_sensor2_A, filter_curr2, filter_index2);
+  current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
+  current_sensor4_A = applyMovingAverage(current_sensor4_A, filter_curr4, filter_index4);
+  
+  // Apply noise floor: clamp weak readings to 0A
+  if (current_sensor1_A < CURRENT_FLOOR_A) current_sensor1_A = 0.0;
+  if (current_sensor2_A < CURRENT_FLOOR_A) current_sensor2_A = 0.0;
+  if (current_sensor3_A < CURRENT_FLOOR_A) current_sensor3_A = 0.0;
+  if (current_sensor4_A < CURRENT_FLOOR_A) current_sensor4_A = 0.0;
+  
+  // Print readings to serial monitor once per second
+  static unsigned long lastPrint = 0;
+  if (now - lastPrint >= 1000) {
+    Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
+      current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
+    Serial.printf("[DEBUG CURR1] RAW_ADC_AVG=%.1fmV RMS=%.2fmV → %.2fA (VREF=%dmV, ratio=%d)\n",
+      debug_raw_adc_avg, debug_rms_curr1, current_sensor1_A, VREF_mV, CURRENT_RATIO);
+    lastPrint = now;
+  }
 
   // ========================================================================
   // STEP 2: CHECK FOR INCOMING LORA PACKETS (REQUEST FROM COORDINATOR)
