@@ -269,25 +269,38 @@ def send_request(device_id):
         
         # 5. Clear IRQ flags
         spi_write(REG_IRQ_FLAGS, 0xFF)
+        time.sleep(0.01)
         
         # 6. Set to TX mode
         spi_write(REG_OP_MODE, 0x83)  # TX mode
+        time.sleep(0.01)
         
         # 7. Wait for transmission complete
         start_time = time.time()
-        while (spi_read(REG_IRQ_FLAGS) & 0x08) == 0:  # Wait for TxDone
-            if time.time() - start_time > 1.0:
-                print(f"✗ Transmission timeout for device {device_id}")
-                return False
+        tx_complete = False
+        while time.time() - start_time < 1.0:
+            irq_flags = spi_read(REG_IRQ_FLAGS)
+            if irq_flags & 0x08:  # TxDone flag
+                tx_complete = True
+                break
             time.sleep(0.01)
         
-        # 8. Clear interrupt and return to RX mode
+        # 8. Clear interrupt and return to RX mode (ALWAYS, regardless of success)
         spi_write(REG_IRQ_FLAGS, 0xFF)
+        time.sleep(0.01)
         spi_write(REG_OP_MODE, 0x85)  # RX continuous mode
         time.sleep(0.01)
         
+        if not tx_complete:
+            return False
+        
         return True
     except Exception as e:
+        # Even on exception, try to return to RX mode
+        try:
+            spi_write(REG_OP_MODE, 0x85)
+        except:
+            pass
         print(f"✗ Send error: {e}")
         return False
 
@@ -310,6 +323,7 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
     while time.time() - start_time < timeout:
         try:
             irq_flags = spi_read(REG_IRQ_FLAGS)
+            
             # CRC error flag - silently clear and retry
             if irq_flags & 0x20:
                 spi_write(REG_IRQ_FLAGS, 0xFF)
@@ -331,15 +345,22 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
 
                     # Clear interrupt
                     spi_write(REG_IRQ_FLAGS, 0xFF)
-                    spi_write(REG_OP_MODE, 0x85)  # Back to RX continuous
+                    time.sleep(0.01)
+                    
+                    # Verify we're back in RX mode
+                    mode = spi_read(REG_OP_MODE)
+                    if (mode & 0x07) != 0x05:  # Not in RX continuous
+                        spi_write(REG_OP_MODE, 0x85)  # Force RX continuous
+                        time.sleep(0.01)
 
                     return bytes(packet)
                 else:
                     # Unexpected packet size - clear IRQ and continue listening
                     spi_write(REG_IRQ_FLAGS, 0xFF)
-                    spi_write(REG_OP_MODE, 0x85)
+                    time.sleep(0.01)
+                    spi_write(REG_OP_MODE, 0x85)  # Ensure RX continuous
         except Exception as e:
-            pass  # Silently handle exceptions
+            pass
 
         time.sleep(0.02)
 
@@ -426,16 +447,17 @@ def query_device(device_id):
                     device_stats[device_id]['last_status'] = response
                     return response
                 else:
-                    print("✗ Invalid response format")
+                    pass
             else:
-                print(f"✗ No response (timeout) [Intento {attempt}]")
+                pass
         else:
-            print(f"✗ Send failed [Intento {attempt}]")
+            pass
         time.sleep(0.2)
     # Update failure count
     if device_id not in device_stats:
         device_stats[device_id] = {'responses': 0, 'failures': 0, 'last_status': None}
     device_stats[device_id]['failures'] += 1
+    print("✗ No response")
     return None
 
 def query_all_devices():
@@ -443,6 +465,35 @@ def query_all_devices():
     print(f"\n{'='*70}")
     print(f"Query Cycle: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*70}")
+    
+    # FULL RESET of LoRa module before each cycle
+    try:
+        print("[RESET] Performing full LoRa module reset...")
+        
+        # 1. Go to sleep mode first
+        spi_write(REG_OP_MODE, 0x80)
+        time.sleep(0.05)
+        
+        # 2. Clear all IRQ flags
+        spi_write(REG_IRQ_FLAGS, 0xFF)
+        time.sleep(0.01)
+        
+        # 3. Reset FIFO pointers
+        spi_write(REG_FIFO_ADDR_PTR, 0x00)
+        spi_write(REG_FIFO_RX_BASE_ADDR, 0x00)
+        time.sleep(0.01)
+        
+        # 4. Go back to RX continuous mode
+        spi_write(REG_OP_MODE, 0x85)
+        time.sleep(0.05)
+        
+        # Verify state
+        mode = spi_read(REG_OP_MODE)
+        irq = spi_read(REG_IRQ_FLAGS)
+        print(f"[DIAGNOSTIC] LoRa reset complete: MODE=0x{mode:02X}, IRQ=0x{irq:02X}")
+        
+    except Exception as e:
+        print(f"[WARNING] Error during LoRa reset: {e}")
     
     responses = {}
     for device_id in range(1, NUM_DEVICES + 1):
@@ -941,6 +992,22 @@ def coordinator_loop():
                 print(f"\n{'='*70}")
                 print(f"Query Cycle #{cycle_count}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 print(f"{'='*70}")
+                
+                # FULL RESET of LoRa module before each cycle
+                try:
+                    print("[RESET] Performing HARD RESET of LoRa module via GPIO...")
+                    
+                    # Hard reset via GPIO RST pin
+                    GPIO.output(GPIO_RST, GPIO.LOW)
+                    time.sleep(0.05)
+                    GPIO.output(GPIO_RST, GPIO.HIGH)
+                    time.sleep(0.1)
+                    
+                    # Now reconfigure the module
+                    configure_lora()
+                    
+                except Exception as e:
+                    print(f"[WARNING] Error during hard reset: {e}")
                 
                 # Query all devices
                 for device_id in range(1, NUM_DEVICES + 1):
