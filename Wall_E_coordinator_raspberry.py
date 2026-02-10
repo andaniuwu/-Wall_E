@@ -1081,10 +1081,15 @@ def coordinator_loop():
                 for device_id in range(1, NUM_DEVICES + 1):
                     response = query_device(device_id)
                     
-                    if response:
-                        # Update shared data structure (thread-safe)
-                        with device_data_lock:
+                    # Update shared data structure (thread-safe)
+                    with device_data_lock:
+                        if response:
+                            # Update with new data
                             shared_device_data[device_id] = response
+                        else:
+                            # Remove stale data when no response to avoid showing old data
+                            if device_id in shared_device_data:
+                                del shared_device_data[device_id]
                     
                     time.sleep(0.5)  # Delay between requests
                 
