@@ -36,6 +36,8 @@ import time
 import RPi.GPIO as GPIO
 import spidev
 import sys
+import os
+import subprocess
 from datetime import datetime
 import threading
 import tkinter as tk
@@ -54,10 +56,27 @@ GPIO_DIO2 = 18
 GPIO_DIO3 = 27
 GPIO_RST = 22
 
-# HMI GPIO Pins
-PIN_VERDE = 17    # Green LED (shared with GPIO_DIO1, will manage carefully)
-PIN_ROJO = 27     # Red LED (shared with GPIO_DIO3, will manage carefully) 
-PIN_BUZZER = 22   # Buzzer (shared with GPIO_RST, will manage carefully)
+# Tower (stack light) GPIO Pins (BCM numbering)
+# OUTPUT,GPIO,PIN,RELAY_INPUT
+# Green,0,27,1
+# Yellow,5,29,2
+# Red,6,31,3
+# Buzzer,13,33,4
+PIN_GREEN_TURRET = 0    # PIN GREEN_COLOR TORRET
+PIN_YELLOW_TURRET = 5   # PIN YELLOW_COLOR TORRET
+PIN_RED_TURRET = 6      # PIN RED_COLOR TORRET
+PIN_BUZZER = 13         # PIN BUZZER TORRET
+RELAY_ACTIVE_LOW = True  # Set True if relay outputs are active-low
+
+def set_relay(pin, on):
+    """Helper to drive relay outputs with optional active-low logic."""
+    try:
+        if RELAY_ACTIVE_LOW:
+            GPIO.output(pin, GPIO.LOW if on else GPIO.HIGH)
+        else:
+            GPIO.output(pin, GPIO.HIGH if on else GPIO.LOW)
+    except:
+        pass
 
 # SPI Configuration
 SPI_BUS = 0
@@ -598,6 +617,11 @@ class AppIndustrial:
         
         self.sonido_habil = True  
         self.falla_activa = False
+        self.torreta_red_active = False
+        self.last_buzzer_time = 0.0
+        self.buzzer_active = False
+        self.buzzer_off_time = 0.0
+        self.test_mode = False
 
         # --- ENCABEZADO (Logos e Iconos) ---
         self.header = tk.Frame(self.root, bg="#483698")
@@ -687,6 +711,8 @@ class AppIndustrial:
         tk.Button(self.f_btn, text="RESET", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
         tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
         tk.Button(self.f_btn, text="MAPA", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
         self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
 
         # Carga imagen para el Mapa
@@ -696,13 +722,16 @@ class AppIndustrial:
         except: 
             self.img_layout_full = None
 
-        # Setup GPIO for HMI indicators (configure outputs that don't conflict with LoRa)
+        # Setup GPIO for tower indicators
         try:
-            GPIO.setup(PIN_BUZZER, GPIO.OUT, initial=GPIO.LOW)
-            # Note: PIN_VERDE and PIN_ROJO overlap with LoRa DIO pins, so we'll be careful
-            print("✓ HMI GPIO initialized")
+            initial_off = GPIO.HIGH if RELAY_ACTIVE_LOW else GPIO.LOW
+            GPIO.setup(PIN_GREEN_TURRET, GPIO.OUT, initial=initial_off)
+            GPIO.setup(PIN_YELLOW_TURRET, GPIO.OUT, initial=initial_off)
+            GPIO.setup(PIN_RED_TURRET, GPIO.OUT, initial=initial_off)
+            GPIO.setup(PIN_BUZZER, GPIO.OUT, initial=initial_off)
+            print("✓ Tower GPIO initialized")
         except Exception as e:
-            print(f"⚠ HMI GPIO warning: {e}")
+            print(f"⚠ Tower GPIO warning: {e}")
 
         # Start periodic update of device status from shared data
         self.actualizar_datos_dispositivos()
@@ -728,10 +757,54 @@ class AppIndustrial:
         except:
             pass
 
+    def test_mode_on(self):
+        self.test_mode = True
+        self.registrar_log("TEST MODE ON")
+
+    def test_mode_off(self):
+        self.test_mode = False
+        self.registrar_log("TEST MODE OFF")
+
+    def actualizar_torreta(self, total_out_of_range, stale_detected):
+        """Update physical tower light and buzzer based on system health"""
+        try:
+            red_active = stale_detected or total_out_of_range >= 2
+            yellow_active = (not red_active) and total_out_of_range == 1
+            green_active = (not red_active) and (not yellow_active)
+
+            set_relay(PIN_GREEN_TURRET, green_active)
+            set_relay(PIN_YELLOW_TURRET, yellow_active)
+            set_relay(PIN_RED_TURRET, red_active)
+
+            now = time.time()
+
+            if red_active and self.sonido_habil:
+                if not self.torreta_red_active:
+                    self.last_buzzer_time = now - 10.0
+                if not self.buzzer_active and (now - self.last_buzzer_time) >= 10.0:
+                    set_relay(PIN_BUZZER, True)
+                    self.buzzer_active = True
+                    self.buzzer_off_time = now + 1.0
+                    self.last_buzzer_time = now
+                if self.buzzer_active and now >= self.buzzer_off_time:
+                    set_relay(PIN_BUZZER, False)
+                    self.buzzer_active = False
+            else:
+                set_relay(PIN_BUZZER, False)
+                self.buzzer_active = False
+
+            self.torreta_red_active = red_active
+        except:
+            pass
+
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
         global shared_device_data, device_data_lock
         
+        now = datetime.now()
+        total_out_of_range = 0
+        stale_detected = False
+
         try:
             with device_data_lock:
                 for device_id in range(1, NUM_DEVICES + 1):
@@ -757,6 +830,18 @@ class AppIndustrial:
                         ]
                         uv_ok = all(lamp_status)
                         
+                        # In test mode, only count Device 1 faults
+                        if not self.test_mode or device_id == 1:
+                            total_out_of_range += (0 if v_ok else 1)
+                            total_out_of_range += sum(0 if lamp_ok else 1 for lamp_ok in lamp_status)
+
+                        # Check if data is stale (>120 seconds old - allows for full query cycle)
+                        timestamp = data.get('timestamp')
+                        if not timestamp or (now - timestamp).total_seconds() > 120:
+                            # In test mode, only Device 1 can trigger stale detection
+                            if not self.test_mode or device_id == 1:
+                                stale_detected = True
+                        
                         # Update visual indicators
                         color_v = "#2ecc71" if v_ok else "#e74c3c"
                         
@@ -767,42 +852,34 @@ class AppIndustrial:
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
                         self.lbls_v_val[idx].config(text=f"{voltage:.1f} V", fg="white" if v_ok else "#ff4444")
 
-                        # Trigger alert if any device has issues
-                        if not v_ok or not uv_ok:
-                            self.activar_alerta(f"FALLA W-{device_id}")
-                        else:
-                            # Only clear if no devices have active faults
-                            any_faults = False
-                            for check_id in range(1, NUM_DEVICES + 1):
-                                if check_id in shared_device_data:
-                                    check_data = shared_device_data[check_id]
-                                    check_v = check_data.get('ac_voltage_V', 0)
-                                    check_v_ok = VOLTAGE_MIN <= check_v <= VOLTAGE_MAX
-                                    check_c1 = check_data.get('curr1_mA', 0)
-                                    check_c2 = check_data.get('curr2_mA', 0)
-                                    check_c3 = check_data.get('curr3_mA', 0)
-                                    check_c4 = check_data.get('curr4_mA', 0)
-                                    check_lamps_ok = (
-                                        CURRENT_MIN <= check_c1 <= CURRENT_MAX and
-                                        CURRENT_MIN <= check_c2 <= CURRENT_MAX and
-                                        CURRENT_MIN <= check_c3 <= CURRENT_MAX and
-                                        CURRENT_MIN <= check_c4 <= CURRENT_MAX
-                                    )
-                                    if not check_v_ok or not check_lamps_ok:
-                                        any_faults = True
-                                        break
-                            
-                            if not any_faults:
-                                self.limpiar_alerta()
                     else:
                         # No data available for this device
-                        self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
-                        for lamp_i in range(4):
-                            self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
-                        self.lbls_v_val[idx].config(text="--- V", fg="#ff4444")
+                        if self.test_mode:
+                            # In test mode, treat missing devices as OK (except Device 1)
+                            self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#2ecc71")
+                            for lamp_i in range(4):
+                                self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#2ecc71")
+                            self.lbls_v_val[idx].config(text="OK", fg="white")
+                            # Only mark as stale if it's Device 1 (critical for test mode)
+                            if device_id == 1:
+                                stale_detected = True
+                        else:
+                            self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
+                            for lamp_i in range(4):
+                                self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
+                            self.lbls_v_val[idx].config(text="--- V", fg="#ff4444")
+                            stale_detected = True
         
         except Exception as e:
             print(f"HMI update error: {e}")
+
+        # Update tower status based on system health
+        self.actualizar_torreta(total_out_of_range, stale_detected)
+
+        if total_out_of_range > 0 or stale_detected:
+            self.activar_alerta("FALLA SISTEMA")
+        else:
+            self.limpiar_alerta()
         
         # Schedule next update
         self.root.after(1000, self.actualizar_datos_dispositivos)
@@ -883,32 +960,23 @@ class AppIndustrial:
         if not self.falla_activa:  # Only log once when fault first detected
             self.falla_activa = True
             self.registrar_log(msg)
-        
-        # Visual/audio alerts
-        try:
-            if self.sonido_habil: 
-                GPIO.output(PIN_BUZZER, GPIO.HIGH)
-        except:
-            pass
 
     def limpiar_alerta(self):
         self.falla_activa = False
-        try:
-            GPIO.output(PIN_BUZZER, GPIO.LOW)
-        except:
-            pass
 
     def silenciar(self):
         self.sonido_habil = False
         try:
-            GPIO.output(PIN_BUZZER, GPIO.LOW)
+            set_relay(PIN_BUZZER, False)
         except:
             pass
 
     def reset(self):
+        """Reset alerts and re-enable sound"""
         self.sonido_habil = True
-        if not self.falla_activa: 
-            self.limpiar_alerta()
+        self.limpiar_alerta()
+        print("[RESET] Alertas limpiadas y sonido re-habilitado")
+        self.registrar_log("Reset manual - Sonido re-habilitado")
 
     def registrar_log(self, info):
         try:
