@@ -209,10 +209,33 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
  */
 
 #define ADC_SAMPLES 200       // Number of samples for RMS calculation (increased for stability)
-#define VREF_mV 1640          // Reference voltage (measured at ADC input: ~1.64V)
-#define CURRENT_RATIO 30      // SCT-013-030 ratio: 30A per 1V
+
+// Current sensor chain calibration (CT 100A:50mA + burden 100R + op-amp gain 91)
+// V_out_rms = I_primary * (R_burden * G) / CT_TURNS_RATIO
+const float CT_PRIMARY_A = 100.0f;
+const float CT_SECONDARY_mA = 50.0f;
+const float BURDEN_OHMS = 100.0f;
+const float AMP_GAIN = 91.0f;
+const float CT_TURNS_RATIO = CT_PRIMARY_A / (CT_SECONDARY_mA / 1000.0f); // 2000:1
+const float V_PER_A_RMS = (BURDEN_OHMS * AMP_GAIN) / CT_TURNS_RATIO;     // V_rms at ADC per A
+const float CURRENT_RATIO = 1.0f / V_PER_A_RMS;                          // A per V_rms at ADC
+
 #define VOLTAGE_RATIO 531     // ZMPT101B conversion: 531 V/V (120V RMS / 0.226V RMS)
-#define CURRENT_FLOOR_A 0.10  // Readings below 0.10A are clamped to 0A (noise suppression)
+#define CURRENT_FLOOR_A 0.0   // Readings below this are clamped to 0A (noise suppression)
+
+// Only sensor 1 is connected in this setup
+#define USE_ONLY_SENSOR1 true
+
+// TEST/SIMULATION MODE: Set to true to simulate sensor values for communication testing
+#define SIMULATE_MODE true
+
+// Simulated sensor values (updated every 5 seconds when SIMULATE_MODE is true)
+float sim_current1_A = 0.5;
+float sim_current2_A = 0.5;
+float sim_current3_A = 0.5;
+float sim_current4_A = 0.5;
+float sim_voltage_V = 125.0;
+static unsigned long lastSimUpdate = 0;
 
 // Current sensor readings (RMS values in Amperes)
 float current_sensor1_A = 0.0;
@@ -234,6 +257,8 @@ uint8_t filter_index4 = 0;
 // DEBUG variables for diagnostics
 float debug_raw_adc_avg = 0;
 float debug_rms_curr1 = 0;
+float debug_min_mV = 0;
+float debug_max_mV = 0;
 float AC_voltage_V = 0.0;     // AC voltage in Volts RMS
 
 
@@ -392,39 +417,44 @@ float applyMovingAverage(float newValue, float buffer[FILTER_SAMPLES], uint8_t &
  *   ~30 samples = ~1-2ms (appropriate for 50/60Hz AC sampling)
  */
 float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
-  long sumSquares = 0;
-  long sum_mV = 0;
-  
+  float sumSquares = 0.0f;
+  float sum_mV = 0.0f;
+  int min_mV = 4095;
+  int max_mV = 0;
+
   // Take samples and accumulate squared values
   for (uint16_t i = 0; i < samples; i++) {
     int raw_mV = analogReadMilliVolts(pin);
     sum_mV += raw_mV;
 
-    // ADC already returns millivolts when using analogReadMilliVolts
-    float voltage_mV = raw_mV;
-    
-    // Remove DC offset (center around 0)
-    float ac_voltage = voltage_mV - VREF_mV;
-    
-    // Accumulate squares for RMS calculation
-    sumSquares += (long)(ac_voltage * ac_voltage);
-    
+    if (raw_mV < min_mV) min_mV = raw_mV;
+    if (raw_mV > max_mV) max_mV = raw_mV;
+
+    // Accumulate for RMS calculation (centered later using mean)
+    sumSquares += (float)raw_mV * (float)raw_mV;
+
     delayMicroseconds(100);  // Small delay between samples
   }
-  
-  // Calculate RMS: sqrt(sum of squares / number of samples)
-  float rms_voltage_mV = sqrt(sumSquares / (float)samples);
 
-  
+  // Calculate RMS using mean-centering: rms = sqrt(E[x^2] - (E[x])^2)
+  float mean_mV = sum_mV / (float)samples;
+  float meanSquares = (sumSquares / (float)samples) - (mean_mV * mean_mV);
+  if (meanSquares < 0.0f) {
+    meanSquares = 0.0f;
+  }
+  float rms_voltage_mV = sqrtf(meanSquares);
+
   // Store debug info for CURR1
   if (pin == CURRENT_SENSOR1) {
-    debug_raw_adc_avg = sum_mV / (float)samples;
+    debug_raw_adc_avg = mean_mV;
     debug_rms_curr1 = rms_voltage_mV;
+    debug_min_mV = (float)min_mV;
+    debug_max_mV = (float)max_mV;
   }
-  
+
   // Convert RMS voltage to current using sensor ratio
-  float current_A = (rms_voltage_mV / 1000.0) * CURRENT_RATIO;
-  
+  float current_A = (rms_voltage_mV / 1000.0f) * CURRENT_RATIO;
+
   return current_A;
 }
 
@@ -446,30 +476,30 @@ float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
  *   ~30 samples = ~1-2ms (appropriate for 50/60Hz AC sampling)
  */
 float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
-  long sumSquares = 0;
-  
+  float sumSquares = 0.0f;
+  float sum_mV = 0.0f;
+
   // Take samples and accumulate squared values
   for (uint16_t i = 0; i < samples; i++) {
     int raw_mV = analogReadMilliVolts(pin);
 
-    // ADC already returns millivolts when using analogReadMilliVolts
-    float voltage_mV = raw_mV;
-    
-    // Remove DC offset (center around 0)
-    float ac_voltage = voltage_mV - VREF_mV;
-    
-    // Accumulate squares for RMS calculation
-    sumSquares += (long)(ac_voltage * ac_voltage);
-    
+    sum_mV += raw_mV;
+    sumSquares += (float)raw_mV * (float)raw_mV;
+
     delayMicroseconds(100);  // Small delay between samples
   }
-  
-  // Calculate RMS: sqrt(sum of squares / number of samples)
-  float rms_voltage_mV = sqrt(sumSquares / (float)samples);
-  
+
+  // Calculate RMS using mean-centering: rms = sqrt(E[x^2] - (E[x])^2)
+  float mean_mV = sum_mV / (float)samples;
+  float meanSquares = (sumSquares / (float)samples) - (mean_mV * mean_mV);
+  if (meanSquares < 0.0f) {
+    meanSquares = 0.0f;
+  }
+  float rms_voltage_mV = sqrtf(meanSquares);
+
   // Convert RMS voltage to actual mains voltage using calibration ratio
-  float voltage_V = (rms_voltage_mV / 1000.0) * VOLTAGE_RATIO;
-  
+  float voltage_V = (rms_voltage_mV / 1000.0f) * VOLTAGE_RATIO;
+
   return voltage_V;
 }
 
@@ -557,16 +587,49 @@ void loop() {
   }
 
   current_sensor1_A = readRMS_and_convertToCurrent(CURRENT_SENSOR1);
-  current_sensor2_A = readRMS_and_convertToCurrent(CURRENT_SENSOR2);
-  current_sensor3_A = readRMS_and_convertToCurrent(CURRENT_SENSOR3);
-  current_sensor4_A = readRMS_and_convertToCurrent(CURRENT_SENSOR4);
+  if (USE_ONLY_SENSOR1) {
+    current_sensor2_A = 0.0;
+    current_sensor3_A = 0.0;
+    current_sensor4_A = 0.0;
+  } else {
+    current_sensor2_A = readRMS_and_convertToCurrent(CURRENT_SENSOR2);
+    current_sensor3_A = readRMS_and_convertToCurrent(CURRENT_SENSOR3);
+    current_sensor4_A = readRMS_and_convertToCurrent(CURRENT_SENSOR4);
+  }
   AC_voltage_V = readRMS_and_convertToVoltage(AC_POWER_PIN);
+  
+  // SIMULATION MODE: Generate random values every 5 seconds
+  if (SIMULATE_MODE) {
+    unsigned long now = millis();
+    if (now - lastSimUpdate >= 5000) {
+      // Generate new random values
+      sim_current1_A = random(0, 1201) / 1000.0f;      // 0-1200 mA → 0-1.200 A
+      sim_current2_A = random(0, 1201) / 1000.0f;
+      sim_current3_A = random(0, 1201) / 1000.0f;
+      sim_current4_A = random(0, 1201) / 1000.0f;
+      sim_voltage_V = 100.0f + (random(0, 501) / 10.0f);  // 100-150 V RMS
+      lastSimUpdate = now;
+      Serial.printf("[SIM] New random values: I1=%.0fmA I2=%.0fmA I3=%.0fmA I4=%.0fmA V=%.1fV\n",
+        sim_current1_A * 1000, sim_current2_A * 1000, sim_current3_A * 1000, sim_current4_A * 1000, sim_voltage_V);
+    }
+    current_sensor1_A = sim_current1_A;
+    current_sensor2_A = sim_current2_A;
+    current_sensor3_A = sim_current3_A;
+    current_sensor4_A = sim_current4_A;
+    AC_voltage_V = sim_voltage_V;
+    debug_raw_adc_avg = 1610.0;
+    debug_rms_curr1 = 25.0;
+    debug_min_mV = 1500.0;
+    debug_max_mV = 1720.0;
+  }
   
   // Apply moving average filter to smooth readings
   current_sensor1_A = applyMovingAverage(current_sensor1_A, filter_curr1, filter_index1);
-  current_sensor2_A = applyMovingAverage(current_sensor2_A, filter_curr2, filter_index2);
-  current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
-  current_sensor4_A = applyMovingAverage(current_sensor4_A, filter_curr4, filter_index4);
+  if (!USE_ONLY_SENSOR1) {
+    current_sensor2_A = applyMovingAverage(current_sensor2_A, filter_curr2, filter_index2);
+    current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
+    current_sensor4_A = applyMovingAverage(current_sensor4_A, filter_curr4, filter_index4);
+  }
   
   // Apply noise floor: clamp weak readings to 0A
   if (current_sensor1_A < CURRENT_FLOOR_A) current_sensor1_A = 0.0;
@@ -577,10 +640,14 @@ void loop() {
   // Print readings to serial monitor once per second
   static unsigned long lastPrint = 0;
   if (now - lastPrint >= 1000) {
+    if (SIMULATE_MODE) {
+      Serial.println("*** SIMULATION MODE ACTIVE ***");
+    }
     Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
       current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
-    Serial.printf("[DEBUG CURR1] RAW_ADC_AVG=%.1fmV RMS=%.2fmV → %.2fA (VREF=%dmV, ratio=%d)\n",
-      debug_raw_adc_avg, debug_rms_curr1, current_sensor1_A, VREF_mV, CURRENT_RATIO);
+    float vpp_mV = debug_max_mV - debug_min_mV;
+    Serial.printf("[DEBUG CURR1] AVG=%.1fmV RMS=%.2fmV Vpp=%.1fmV min=%.0fmV max=%.0fmV -> %.4fA (A/V=%.4f)\n",
+      debug_raw_adc_avg, debug_rms_curr1, vpp_mV, debug_min_mV, debug_max_mV, current_sensor1_A, CURRENT_RATIO);
     lastPrint = now;
   }
 
