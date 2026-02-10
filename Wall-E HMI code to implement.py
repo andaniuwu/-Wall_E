@@ -36,12 +36,12 @@ class AppIndustrial:
 
         try:
             # Logo Bimbo como icono (sin recuadro blanco)
-            img_b = Image.open("/home/rasp/Downloads/Grupo_Bimbo.png").convert("RGBA")
+            img_b = Image.open("WALL-E HMI images/Grupo_Bimbo.png").convert("RGBA")
             self.photo = ImageTk.PhotoImage(img_b.resize((70, 35), Image.LANCZOS))
             tk.Label(self.header, image=self.photo, bg="#483698").pack(side="left")
 
             # Logo Moldex como icono
-            img_m = Image.open("/home/rasp/Downloads/Moldex1.png").convert("RGBA")
+            img_m = Image.open("WALL-E HMI images/Moldex1.png").convert("RGBA")
             self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
             tk.Label(self.header, image=self.photo2, bg="#483698").pack(side="left", padx=15)
         except:
@@ -102,7 +102,7 @@ class AppIndustrial:
 
         # Carga imagen para el Mapa
         try:
-            m_img = Image.open("/home/rasp/Downloads/Bimbo.png")
+            m_img = Image.open("WALL-E HMI images/Bimbo.png")
             self.img_layout_full = ImageTk.PhotoImage(m_img.resize((440, 550), Image.LANCZOS))
         except: self.img_layout_full = None
 
@@ -115,7 +115,7 @@ class AppIndustrial:
 
     def mostrar_imagen_layout(self):
         if not self.img_layout_full:
-            messagebox.showwarning("Error", "No se encontró el mapa Bimbo.png")
+            messagebox.showwarning("Error", "No se encontró el mapa WALL-E HMI images/Bimbo.png")
             return
         top = tk.Toplevel(self.root)
         top.geometry("480x700")
