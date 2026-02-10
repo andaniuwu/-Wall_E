@@ -125,6 +125,7 @@ device_stats = {}                  # Statistics for each device
 # Shared data structure for HMI (thread-safe)
 device_data_lock = threading.Lock()
 shared_device_data = {}            # Device status shared between coordinator thread and HMI
+current_scanning_device = 0        # Currently scanning device ID (for HMI display)
 coordinator_running = False        # Flag to control coordinator thread
 coordinator_thread = None          # Reference to coordinator thread
 
@@ -309,9 +310,8 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
     while time.time() - start_time < timeout:
         try:
             irq_flags = spi_read(REG_IRQ_FLAGS)
-            # CRC error flag
+            # CRC error flag - silently clear and retry
             if irq_flags & 0x20:
-                print(f"[DEBUG] CRC error detected for device {device_id}, clearing IRQ flags.")
                 spi_write(REG_IRQ_FLAGS, 0xFF)
                 continue
 
@@ -333,19 +333,16 @@ def wait_response(device_id, timeout=RESPONSE_TIMEOUT):
                     spi_write(REG_IRQ_FLAGS, 0xFF)
                     spi_write(REG_OP_MODE, 0x85)  # Back to RX continuous
 
-                    print(f"[DEBUG] Received packet from device {device_id}: {packet}")
                     return bytes(packet)
                 else:
-                    print(f"[DEBUG] Unexpected packet size {nb_bytes} from device {device_id}, clearing IRQ.")
-                    # Clear IRQ and continue listening
+                    # Unexpected packet size - clear IRQ and continue listening
                     spi_write(REG_IRQ_FLAGS, 0xFF)
                     spi_write(REG_OP_MODE, 0x85)
         except Exception as e:
-            print(f"[DEBUG] Exception while waiting for response from device {device_id}: {e}")
+            pass  # Silently handle exceptions
 
         time.sleep(0.02)
 
-    print(f"[DEBUG] Timeout waiting for response from device {device_id} after {timeout} seconds.")
     return None
 
 # ============================================================================
@@ -398,6 +395,12 @@ def parse_response(packet, device_id):
 
 def query_device(device_id):
     """Query single device and collect response"""
+    global current_scanning_device, device_data_lock
+    
+    # Update shared variable so HMI knows which device we're scanning
+    with device_data_lock:
+        current_scanning_device = device_id
+    
     print(f"\n  [Device {device_id}] ", end="", flush=True)
     max_retries = 9  # 10 intentos en total
     short_timeout = 0.8
@@ -569,6 +572,13 @@ class AppIndustrial:
 
         tk.Label(self.root, text="MONITOREO DE LÁMPARAS", font=("Arial", 13, "bold"), fg="white", bg="#483698").pack(pady=5)
 
+        # --- ESTADO DE ESCANEO ---
+        self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
+        self.status_frame.pack(fill="x", padx=10, pady=2)
+        self.lbl_scanning = tk.Label(self.status_frame, text="Escaneando: W-0", font=("Arial", 9, "bold"), 
+                                     fg="#00ff00", bg="#2a1a5a")
+        self.lbl_scanning.pack()
+
         # --- PANEL DE ROBOTS (DISTRIBUCIÓN 3-3-3) ---
         self.container = tk.Frame(self.root, bg="#483698")
         self.container.pack(expand=True, fill="both", padx=5)
@@ -651,7 +661,21 @@ class AppIndustrial:
     # =======================================================
     def actualizar_hora(self):
         self.lbl_reloj.config(text=datetime.now().strftime("%H:%M:%S"))
+        self.actualizar_estado_escaneo()
         self.root.after(1000, self.actualizar_hora)
+    
+    def actualizar_estado_escaneo(self):
+        """Update scanning device status"""
+        global current_scanning_device, device_data_lock
+        try:
+            with device_data_lock:
+                device_id = current_scanning_device
+            if device_id > 0:
+                self.lbl_scanning.config(text=f"Escaneando: W-{device_id}")
+            else:
+                self.lbl_scanning.config(text="Escaneando: W-0")
+        except:
+            pass
 
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
