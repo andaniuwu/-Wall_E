@@ -35,9 +35,9 @@ MONITORING CAPABILITIES:
 HARDWARE COMPONENTS:
   - ESP32-S3 WROOM DevKit microcontroller
   - SX1278 LoRa module (433MHz)
-  - 4x ACS712T-5A Hall-effect current sensors with 1:2 voltage divisor (0-5V → 0-2.5V)
+  - 4x ACS712T-5A Hall-effect current sensors with 1:2 voltage divisor (5.4V → 2.7V → 1.35V nominal)
   - AC voltage monitor (ZMPT101B with RMS conditioning)
-  - Power supply (5V/USB for ESP32, 3.3V for LoRa)
+  - Power supply (5.4V external for sensors, 5V/USB for ESP32, 3.3V for LoRa)
   - Industrial-grade enclosure
 
 COMMUNICATION PROTOCOL:
@@ -187,15 +187,16 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 // SENSOR CALIBRATION & CONVERSION
 // ============================================================================
 /*
- * ACS712T-5A Current Sensor Calibration (DC Sensor with voltage divisor):
- *   - Sensor sensitivity: 185 mV/A (at 5V operation)
- *   - DC Offset at no load: 2.5V (VCC/2 = 5V/2)
- *   - With voltage divisor (5V → 2.5V): offset = 1.25V on ESP32 ADC
- *   - Full scale range: 0-5A linear mapped to 0-2.5V (before divisor) = 0-1.25V (after divisor)
+ * ACS712T-5A Current Sensor Calibration (Hall-effect sensor with voltage divisor):
+ *   - Power supply: 5.4V (measured external supply for sensors)
+ *   - Sensor sensitivity: 185 mV/A (at VCC operation)
+ *   - DC Offset at no load: 2.7V (VCC/2 = 5.4V/2)
+ *   - With voltage divisor 1:2 (860 ohm / 860 ohm): 2.7V → 1.35V theoretical (1.55V measured due to tolerance)
+ *   - Full scale range: 0-5A mapped to ±462.5mV from offset
  *   - Sensitivity after divisor: 185mV/A ÷ 2 = 92.5 mV/A on ESP32 ADC
  *   - ESP32-S3 ADC: 12-bit (0-4095 = 0-3.3V)
  *   - ADC resolution: 3.3V / 4095 = 0.8056 mV per step
- *   - Safe input range: 0.625V to 1.875V (with margin from 3.3V max)
+ *   - Safe input range with 5.4V supply: ~1.1V to 2.0V (well within 3.3V ADC max)
  *   
  * ZMPT101B AC Voltage Sensor Calibration:
  *   - Input: 120V RMS AC mains
@@ -207,11 +208,11 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
  *   - Conversion ratio: 120V RMS / 0.226V RMS = 531 V/V
  *   - Alert threshold: < 100V RMS
  *   
- * MEASUREMENT PROCESS FOR ACS712T (DC sensor):
+ * MEASUREMENT PROCESS FOR ACS712T:
  *   1. Sample ADC multiple times for averaging
- *   2. Calculate average voltage
- *   3. Subtract DC offset (1.25V nominal)
- *   4. Convert voltage difference to current using sensitivity
+ *   2. Calculate average voltage (or RMS for AC mode)
+ *   3. Subtract DC offset (1.55V calibrated value)
+ *   4. Convert voltage difference to current using sensitivity (92.5mV/A)
  *   5. Filter and apply noise floor
  *   
  * Measurement process for ZMPT101B (AC sensor):
@@ -519,7 +520,7 @@ float readDC_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
 /*
  * Samples an ADC pin multiple times and calculates RMS AC current.
  * Uses MULTIPLE RMS calculations and averages them for better noise rejection.
- * ACS712T outputs a sinusoidal signal centered on DC offset (1.25V with divisor).
+ * ACS712T outputs a sinusoidal signal centered on DC offset (1.55V measured with divisor).
  * 
  * PARAMETERS:
  *   pin: ADC pin to sample
@@ -559,7 +560,7 @@ float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES, 
 
   // Store debug info for CURR1 (using last RMS calculation values for display)
   if (pin == CURRENT_SENSOR1) {
-    debug_raw_adc_avg = 1250.0f;  // Expected DC offset
+    debug_raw_adc_avg = ACS712_DC_OFFSET_V * 1000.0f;  // Expected DC offset in mV (1550mV for 5.4V supply)
     debug_rms_curr1 = current_A_avg * ACS712_SENSITIVITY_mVpA;  // Show equivalent RMS voltage
     debug_min_mV = (float)min_mV_all;
     debug_max_mV = (float)max_mV_all;
@@ -749,10 +750,11 @@ void loop() {
       current_sensor4_A = sim_current4_A;
     }
     AC_voltage_V = sim_voltage_V;
-    debug_raw_adc_avg = 1610.0;
-    debug_rms_curr1 = 25.0;
-    debug_min_mV = 1500.0;
-    debug_max_mV = 1720.0;
+    // Simulated debug values (consistent with 1.55V offset and typical AC readings)
+    debug_raw_adc_avg = ACS712_DC_OFFSET_V * 1000.0f;  // 1550mV - current offset
+    debug_rms_curr1 = 25.0;  // Simulated RMS voltage swing (typical for ~0.5A AC)
+    debug_min_mV = 1450.0;   // Min ADC reading in simulation
+    debug_max_mV = 1650.0;   // Max ADC reading in simulation
   }
   
   // Apply moving average filter to smooth readings
