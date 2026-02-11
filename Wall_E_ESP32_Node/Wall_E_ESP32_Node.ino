@@ -16,8 +16,8 @@ SYSTEM DESCRIPTION:
 LAMPS DESCRIPTION:
   - UV lamps are used for disinfection air in production lines
   - Model: Microbial Area Kleaner MAK-414: It seems to has 4 UV lamps per unit, works at 110Vac, 4.2A current in total (1.05A per lamp)
-  - Each lamp has a current sensor (SCT-013-030) to monitor its operation
-  - AC voltage sensor (ZMPT101B) detects presence/absence of mains power
+  - Each lamp has a current sensor (ACS712T-5A Hall-effect with voltage divisor) to monitor its operation
+  - AC voltage sensor (ZMPT101B) monitors mains voltage presence/absence and RMS value
 
 
 ARCHITECTURE:
@@ -27,16 +27,16 @@ ARCHITECTURE:
   - Protocol: Request/Response with acknowledgment
 
 MONITORING CAPABILITIES:
-  1. AC Current Monitoring (4x SCT-013-030 current transformers)
-  2. AC Power Presence/Absence detection (ZMPT101B voltage sensor)
+  1. Dual-mode Current Monitoring: AC (RMS) or DC (average) via ACS712T-5A (4 channels)
+  2. AC Voltage monitoring (ZMPT101B) for mains presence detection and RMS voltage
   3. Multi-sensor support (4 current channels per node)
-  4. Automatic status reporting on request
+  4. Automatic measurements reporting on request with scaled 8-bit values
 
 HARDWARE COMPONENTS:
   - ESP32-S3 WROOM DevKit microcontroller
   - SX1278 LoRa module (433MHz)
-  - 4x SCT-013-030 Current Transformers (AC current monitoring)
-  - AC voltage monitor (ZMPT101B voltage sensor)
+  - 4x ACS712T-5A Hall-effect current sensors with 1:2 voltage divisor (0-5V → 0-2.5V)
+  - AC voltage monitor (ZMPT101B with RMS conditioning)
   - Power supply (5V/USB for ESP32, 3.3V for LoRa)
   - Industrial-grade enclosure
 
@@ -49,36 +49,39 @@ COMMUNICATION PROTOCOL:
     - REQ_CODE: 0x01 (read sensor data)
 
   Response Packet (from ESP32):
-    [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_mA | CURR2_mA | CURR3_mA | CURR4_mA]
-    - NET_ID: Echo network ID
+    [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_SCALED | CURR2_SCALED | CURR3_SCALED | CURR4_SCALED]
+    - NET_ID: Echo network ID (0xA5)
     - MSG_RESP: Message type = 0x90 (response)
     - DEVICE_ID: 1-9 (sender device ID)
-    - SEQ: 16-bit sequence number for tracking
-    - AC_V_SCALED: Voltage scaled 0-255 (maps to 0-130V RMS)
-    - CURR1_mA: Current scaled 0-255 (maps to 0-2550 mA)
-    - CURR2_mA: Current scaled 0-255 (maps to 0-2550 mA)
-    - CURR3_mA: Current scaled 0-255 (maps to 0-2550 mA)
-    - CURR4_mA: Current scaled 0-255 (maps to 0-2550 mA)
+    - SEQ_LO | SEQ_HI: 16-bit sequence number for tracking
+    - AC_V_SCALED: AC voltage scaled 0-255 (maps 0.0-130.0 V RMS)
+    - CURR1_SCALED: Current 1 scaled 0-255 (maps 0-2550 mA or 0-2.55A)
+    - CURR2_SCALED: Current 2 scaled 0-255 (maps 0-2550 mA or 0-2.55A)
+    - CURR3_SCALED: Current 3 scaled 0-255 (maps 0-2550 mA or 0-2.55A)
+    - CURR4_SCALED: Current 4 scaled 0-255 (maps 0-2550 mA or 0-2.55A)
 
-STATUS CODES:
-  0 = OK (device/lamp working normally)
-  1 = ALERT (device/lamp failure or power loss)
+STATUS INFORMATION:
+  Measurements are scaled to 8-bit values to fit in the 10-byte packet:
+  - Voltage: 0-255 represents 0-130V RMS with resolution 0.51 V/step
+  - Current: 0-255 represents 0-2550 mA (0-2.55A) with resolution 10 mA/step
+  - Coordinator can reconstruct original values from scaled values
+  - No status codes (0=OK/1=ALERT) in current implementation; all measurements sent directly
 
 OPERATION FLOW:
   1. ESP32 initializes and enters listening mode
-  2. Continuously monitors sensor values (ADC pins)
+  2. Continuously reads sensor values (ADC pins) and applies filtering
   3. When request arrives, validates NET_ID and TARGET_ID
-  4. If match found, reads current sensor values
-  5. Scales sensor values to 8-bit format for transmission
-  6. Sends response packet back to coordinator
-  7. Returns to listening mode
+  4. If match found, scales current measurements to 8-bit format
+  5. Builds and sends response packet back to coordinator
+  6. Returns to listening mode
 
 ADJUSTMENTS PER INSTALLATION:
-  - TX_ID: Set to 1-9 for each device
-  - CURRENT_THRESHOLD_MIN: Adjust based on lamp specifications (default 0.5A)
-  - CURRENT_THRESHOLD_MAX: Adjust based on lamp specifications (default 1.2A)
-  - AC_VOLTAGE_THRESHOLD: Alert if < 100V RMS (default)
-  - LoRa frequency: Use 433E6 (Asia), 866E6 (Europe), 915E6 (Americas)
+  - TX_ID: Set to 1-9 for each device (line 149)
+  - CURRENT_MEASUREMENT_AC: Set true for AC mode (RMS×5) or false for DC mode (line 265)
+  - SIMULATE_MODE: Set true to test without sensors, false for real deployment (line 268)
+  - CURRENT_THRESHOLD_MIN/MAX: For optional firmware-level filtering if needed (lines 277-278)
+  - AC_VOLTAGE_THRESHOLD: Alert threshold if implementing local logic (line 279)
+  - LoRa frequency: 433E6 (Asia), 866E6 (Europe), 915E6 (Americas) (line 259)
 
 ================================================================================
 */
@@ -184,12 +187,16 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 // SENSOR CALIBRATION & CONVERSION
 // ============================================================================
 /*
- * SCT-013-030 Current Sensor Calibration:
- *   - Sensor ratio: 30A / 1V (output)
- *   - At 1A nominal: outputs ~33.3mV (with signal conditioning)
+ * ACS712T-5A Current Sensor Calibration (DC Sensor with voltage divisor):
+ *   - Sensor sensitivity: 185 mV/A (at 5V operation)
+ *   - DC Offset at no load: 2.5V (VCC/2 = 5V/2)
+ *   - With voltage divisor (5V → 2.5V): offset = 1.25V on ESP32 ADC
+ *   - Full scale range: 0-5A linear mapped to 0-2.5V (before divisor) = 0-1.25V (after divisor)
+ *   - Sensitivity after divisor: 185mV/A ÷ 2 = 92.5 mV/A on ESP32 ADC
  *   - ESP32-S3 ADC: 12-bit (0-4095 = 0-3.3V)
  *   - ADC resolution: 3.3V / 4095 = 0.8056 mV per step
- *
+ *   - Safe input range: 0.625V to 1.875V (with margin from 3.3V max)
+ *   
  * ZMPT101B AC Voltage Sensor Calibration:
  *   - Input: 120V RMS AC mains
  *   - Peak voltage: 120V RMS × √2 = 169.7V peak
@@ -200,34 +207,48 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
  *   - Conversion ratio: 120V RMS / 0.226V RMS = 531 V/V
  *   - Alert threshold: < 100V RMS
  *   
- * IMPORTANT: Both sensors use AC voltage oscillating around a DC center point.
- * Measurement process:
+ * MEASUREMENT PROCESS FOR ACS712T (DC sensor):
+ *   1. Sample ADC multiple times for averaging
+ *   2. Calculate average voltage
+ *   3. Subtract DC offset (1.25V nominal)
+ *   4. Convert voltage difference to current using sensitivity
+ *   5. Filter and apply noise floor
+ *   
+ * Measurement process for ZMPT101B (AC sensor):
  *   1. Sample 30 times (~1-2ms, appropriate for 50/60Hz AC)
  *   2. Remove DC offset from each sample
  *   3. Calculate RMS: sqrt(sum of squares / number of samples)
- *   4. Convert RMS to actual measurement (current in A, or voltage in V)
+ *   4. Convert RMS to actual measurement (voltage in V)
  */
 
-#define ADC_SAMPLES 200       // Number of samples for RMS calculation (increased for stability)
+#define ADC_SAMPLES 200       // Number of samples per RMS calculation
+#define RMS_ITERATIONS 5      // Number of RMS calculations to average (better noise rejection)
 
-// Current sensor chain calibration (CT 100A:50mA + burden 100R + op-amp gain 91)
-// V_out_rms = I_primary * (R_burden * G) / CT_TURNS_RATIO
-const float CT_PRIMARY_A = 100.0f;
-const float CT_SECONDARY_mA = 50.0f;
-const float BURDEN_OHMS = 100.0f;
-const float AMP_GAIN = 91.0f;
-const float CT_TURNS_RATIO = CT_PRIMARY_A / (CT_SECONDARY_mA / 1000.0f); // 2000:1
-const float V_PER_A_RMS = (BURDEN_OHMS * AMP_GAIN) / CT_TURNS_RATIO;     // V_rms at ADC per A
-const float CURRENT_RATIO = 1.0f / V_PER_A_RMS;                          // A per V_rms at ADC
+// ACS712T-5A current sensor calibration with voltage divisor
+// Original sensor specs (5V operation):
+//   - Sensitivity: 185 mV/A
+//   - DC Offset: 2.5V (at zero current)
+// With voltage divisor (5V → 2.5V on ESP32 3.3V ADC line):
+//   - DCOffset_divisor = 2.5V / 2 = 1.25V
+//   - Sensitivity_divisor = 185mV/A / 2 = 92.5 mV/A
+const float ACS712_DC_OFFSET_V = 1.25f;        // DC offset voltage with divisor (1.25V)
+const float ACS712_SENSITIVITY_mVpA = 92.5f;   // Sensitivity in mV/A (185mV/A ÷ 2 from divisor)
+const float ACS712_SENSITIVITY_VpA = ACS712_SENSITIVITY_mVpA / 1000.0f;  // Convert to V/A
+const float ACS712_MAX_CURRENT_A = 5.0f;       // Maximum measurable current (5A)
 
 #define VOLTAGE_RATIO 531     // ZMPT101B conversion: 531 V/V (120V RMS / 0.226V RMS)
 #define CURRENT_FLOOR_A 0.0   // Readings below this are clamped to 0A (noise suppression)
 
-// Only sensor 1 is connected in this setup
-#define USE_ONLY_SENSOR1 true
+// Enable/disable multi-sensor reading: true = CURR1 only, false = all 4 sensors
+#define USE_ONLY_SENSOR1 false
+
+// CURRENT MEASUREMENT MODE: Choose between AC and DC measurement
+// Set to true for AC measurement (RMS), false for DC measurement (average)
+#define CURRENT_MEASUREMENT_AC true
 
 // TEST/SIMULATION MODE: Set to true to simulate sensor values for communication testing
-#define SIMULATE_MODE true
+// Set to false to use real sensor readings from ACS712T + ZMPT101B
+#define SIMULATE_MODE false
 
 // Simulated sensor values (updated every 5 seconds when SIMULATE_MODE is true)
 float sim_current1_A = 0.5;
@@ -263,32 +284,33 @@ float AC_voltage_V = 0.0;     // AC voltage in Volts RMS
 
 
 // ============================================================================
-// SENSOR THRESHOLDS
+// MEASUREMENT THRESHOLDS (Optional - for coordinator-side filtering)
 // ============================================================================
 /*
+ * These thresholds are available for future firmware-level filtering/validation.
+ * Currently they are stored but NOT used in this implementation.
+ * The coordinator receives all measurements and handles filtering logic.
+ *
  * CURRENT_THRESHOLD_MIN / CURRENT_THRESHOLD_MAX (in Amperes):
- *   - Based on expected lamp current consumption
- *   - If measured current < MIN or > MAX → ALERT
- *   - If MIN ≤ measured current ≤ MAX → OK
- *   - For UV lamps: typical range 0.5A to 1.0A
+ *   - Define acceptable current range for each lamp
+ *   - For UV lamps: typical range 0.5A to 1.2A per lamp
+ *   - Can be used on ESP32 or coordinator depending on requirements
  *
- * AC_THRESHOLD:
- *   - ZMPT101B voltage monitoring output
- *   - If ADC < threshold → No AC power (ALERT)
- *   - If ADC ≥ threshold → AC power present (OK)
- *   - Typical range: 1500-2500 depending on circuit
+ * AC_VOLTAGE_THRESHOLD (in Volts RMS):
+ *   - Minimum acceptable mains voltage for safe operation
+ *   - Below this value indicates potential power supply issue
+ *   - Typical range: 95-110V RMS
  *
- * CALIBRATION PROCEDURE:
- * 1. Upload this code with debug enabled
- * 2. Open Serial Monitor (Tools → Serial Monitor, 115200 baud)
- * 3. Monitor "Current: CURR1=XXX.XXmA CURR2=XXX.XXmA ..." values with normal loads
- * 4. Set MIN/MAX thresholds to bracket normal operation
- * 5. Test with faulty/missing lamps to verify ALERT state
+ * DEBUG / CALIBRATION:
+ * 1. Open Serial Monitor (Tools → Serial Monitor, 115200 baud)
+ * 2. Monitor "Current: CURR1=X.XXA ... | AC Voltage: XXX.XV RMS" output
+ * 3. Verify measurements are in expected range with known loads
+ * 4. Use these thresholds if implementing local validation
  */
 
 float CURRENT_THRESHOLD_MIN = 0.5;   // Minimum acceptable current (Amperes)
 float CURRENT_THRESHOLD_MAX = 1.2;   // Maximum acceptable current (Amperes)
-float AC_VOLTAGE_THRESHOLD = 100.0;  // Minimum acceptable voltage (Volts RMS) - Alert if < 100V
+float AC_VOLTAGE_THRESHOLD = 100.0;  // Minimum acceptable voltage (Volts RMS)
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -312,8 +334,11 @@ void setup() {
 
   // Initialize UART serial for debugging output
   Serial.begin(115200);
-  // while (!Serial);           // COMENTADO: Bloqueaba el inicio cuando no hay PC conectada
-  delay(500);                   // Breve espera para que Serial se inicialice si está disponible
+  // NOTE: while (!Serial); is commented out because:
+  //   - It blocks startup if no USB/Serial Monitor is connected
+  //   - Our system must run autonomously without PC connection
+  //   - We use delay(500) instead to give Serial time to stabilize if available
+  delay(500);
 
   // Calibrate ADC for accurate millivolt readings
   analogReadResolution(12);
@@ -341,16 +366,6 @@ void setup() {
     Serial.println("  - Module not physically connected");
     Serial.println("  - Wrong pin configuration");
     Serial.println("  - SPI bus malfunction");
-    
-    // Error blink loop:
-    // while (true) {
-    //   neopixel.setPixelColor(0, COLOR_RED);
-    //   neopixel.show();
-    //   delay(100);
-    //   neopixel.setPixelColor(0, COLOR_OFF);
-    //   neopixel.show();
-    //   delay(100);
-    // }
     neopixel.setPixelColor(0, COLOR_RED);
     neopixel.show();
   }
@@ -400,40 +415,28 @@ float applyMovingAverage(float newValue, float buffer[FILTER_SAMPLES], uint8_t &
 
 
 // ============================================================================
-// HELPER FUNCTION - RMS Calculation for AC Current Measurement
+// HELPER FUNCTION - Single RMS Calculation (internal)
 // ============================================================================
 /*
- * Samples an ADC pin multiple times and calculates RMS (Root Mean Square) value.
- * RMS is the effective AC voltage, which converts to current via the sensor ratio.
- * 
- * PARAMETERS:
- *   pin: ADC pin to sample
- *   samples: Number of samples to take (default 30)
- *   
- * RETURNS:
- *   Current in Amperes (RMS)
- *   
- * TIMING:
- *   ~30 samples = ~1-2ms (appropriate for 50/60Hz AC sampling)
+ * Helper function that performs ONE RMS calculation on a set of samples.
+ * Returns the RMS voltage value in millivolts.
  */
-float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
+float calculateSingleRMS(uint8_t pin, uint16_t samples, int &min_mV, int &max_mV) {
   float sumSquares = 0.0f;
   float sum_mV = 0.0f;
-  int min_mV = 4095;
-  int max_mV = 0;
+  min_mV = 4095;
+  max_mV = 0;
 
   // Take samples and accumulate squared values
   for (uint16_t i = 0; i < samples; i++) {
     int raw_mV = analogReadMilliVolts(pin);
     sum_mV += raw_mV;
+    sumSquares += (float)raw_mV * (float)raw_mV;
 
     if (raw_mV < min_mV) min_mV = raw_mV;
     if (raw_mV > max_mV) max_mV = raw_mV;
 
-    // Accumulate for RMS calculation (centered later using mean)
-    sumSquares += (float)raw_mV * (float)raw_mV;
-
-    delayMicroseconds(100);  // Small delay between samples
+    delayMicroseconds(50);  // Small delay between samples
   }
 
   // Calculate RMS using mean-centering: rms = sqrt(E[x^2] - (E[x])^2)
@@ -442,20 +445,119 @@ float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
   if (meanSquares < 0.0f) {
     meanSquares = 0.0f;
   }
-  float rms_voltage_mV = sqrtf(meanSquares);
+  return sqrtf(meanSquares);
+}
+
+// ============================================================================
+// HELPER FUNCTION - DC Current Measurement (ACS712T)
+// ============================================================================
+/*
+ * Samples an ADC pin multiple times and calculates DC current.
+ * Uses simple averaging of multiple samples for DC measurement.
+ * ACS712T can also measure DC - just subtract offset and convert.
+ * 
+ * PARAMETERS:
+ *   pin: ADC pin to sample
+ *   samples: Number of samples to average (default 200)
+ *   
+ * RETURNS:
+ *   Current in Amperes (DC)
+ *   
+ * TIMING:
+ *   ~200 samples = ~20-30ms total
+ */
+float readDC_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
+  float sum_mV = 0.0f;
+  int min_mV = 4095;
+  int max_mV = 0;
+
+  // Take samples and accumulate values
+  for (uint16_t i = 0; i < samples; i++) {
+    int raw_mV = analogReadMilliVolts(pin);
+    sum_mV += raw_mV;
+
+    if (raw_mV < min_mV) min_mV = raw_mV;
+    if (raw_mV > max_mV) max_mV = raw_mV;
+
+    delayMicroseconds(50);  // Small delay between samples
+  }
+
+  // Calculate average DC voltage
+  float mean_mV = sum_mV / (float)samples;
+  float voltage_diff_mV = mean_mV - (ACS712_DC_OFFSET_V * 1000.0f);  // Subtract offset
 
   // Store debug info for CURR1
   if (pin == CURRENT_SENSOR1) {
     debug_raw_adc_avg = mean_mV;
-    debug_rms_curr1 = rms_voltage_mV;
+    debug_rms_curr1 = voltage_diff_mV;  // Voltage difference from offset
     debug_min_mV = (float)min_mV;
     debug_max_mV = (float)max_mV;
   }
 
-  // Convert RMS voltage to current using sensor ratio
-  float current_A = (rms_voltage_mV / 1000.0f) * CURRENT_RATIO;
+  // Convert voltage difference to current using ACS712T sensitivity
+  // current = voltage_diff / sensitivity
+  float current_A = (voltage_diff_mV / 1000.0f) / ACS712_SENSITIVITY_VpA;
+
+  // Clamp to valid range (ACS712T rated 0-5A)
+  if (current_A < 0.0f) current_A = 0.0f;
+  if (current_A > ACS712_MAX_CURRENT_A) current_A = ACS712_MAX_CURRENT_A;
 
   return current_A;
+}
+
+// ============================================================================
+// HELPER FUNCTION - AC Current Measurement using Multiple RMS (ACS712T)
+// ============================================================================
+/*
+ * Samples an ADC pin multiple times and calculates RMS AC current.
+ * Uses MULTIPLE RMS calculations and averages them for better noise rejection.
+ * ACS712T outputs a sinusoidal signal centered on DC offset (1.25V with divisor).
+ * 
+ * PARAMETERS:
+ *   pin: ADC pin to sample
+ *   samples: Number of samples per RMS calculation (default 200)
+ *   iterations: Number of RMS calculations to average (default 5)
+ *   
+ * RETURNS:
+ *   Current in Amperes (RMS - effective AC current)
+ *   
+ * TIMING:
+ *   ~200 samples × 5 iterations = ~100-150ms total (excellent noise reduction)
+ */
+float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES, uint8_t iterations = RMS_ITERATIONS) {
+  float rms_current_sum = 0.0f;
+  int min_mV_all = 4095;
+  int max_mV_all = 0;
+
+  // Take multiple RMS readings and average them
+  for (uint8_t iter = 0; iter < iterations; iter++) {
+    int min_mV, max_mV;
+    float rms_voltage_mV = calculateSingleRMS(pin, samples, min_mV, max_mV);
+    
+    // Track overall min/max
+    if (min_mV < min_mV_all) min_mV_all = min_mV;
+    if (max_mV > max_mV_all) max_mV_all = max_mV;
+
+    // Convert this RMS voltage to current
+    float current_A = (rms_voltage_mV / 1000.0f) / ACS712_SENSITIVITY_VpA;
+    if (current_A < 0.0f) current_A = 0.0f;
+    if (current_A > ACS712_MAX_CURRENT_A) current_A = ACS712_MAX_CURRENT_A;
+    
+    rms_current_sum += current_A;
+  }
+
+  // Average all RMS current readings
+  float current_A_avg = rms_current_sum / (float)iterations;
+
+  // Store debug info for CURR1 (using last RMS calculation values for display)
+  if (pin == CURRENT_SENSOR1) {
+    debug_raw_adc_avg = 1250.0f;  // Expected DC offset
+    debug_rms_curr1 = current_A_avg * ACS712_SENSITIVITY_mVpA;  // Show equivalent RMS voltage
+    debug_min_mV = (float)min_mV_all;
+    debug_max_mV = (float)max_mV_all;
+  }
+
+  return current_A_avg;
 }
 
 // ============================================================================
@@ -504,49 +606,29 @@ float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
 }
 
 // ============================================================================
-// HELPER FUNCTION - Optional ADC Averaging (reduce noise)
-// ============================================================================
-/*
- * Uncomment this function to enable averaging for more stable readings.
- * This is useful if sensors are noisy or in high electrical noise environment.
- *
- * TRADE-OFF:
- *   - Pro: Smoother readings, less false alerts
- *   - Con: Adds ~1ms per read per sample
- *
- * USAGE: Replace analogRead() calls with readAveragedADC()
- *   Example: UV_sensor1_value = readAveragedADC(UV_SENSOR1, 4);
- */
-
-int readAveragedADC(uint8_t pin, uint8_t samples = 4) {
-  long sum = 0;
-  for (uint8_t i = 0; i < samples; i++) {
-    sum += analogRead(pin);
-    delayMicroseconds(200);  // Small delay for ADC to settle
-  }
-  return (int)(sum / samples);
-}
-
-// ============================================================================
 // SCALING FUNCTIONS - Convert measurements to 8-bit packed format
 // ============================================================================
 /*
- * Option 1: Minimal packet format
- * - Voltage: 0-255 represents 0-130V RMS (0.51 V/step)
- * - Current: 0-255 represents 0-2550 mA (10 mA/step)
+ * Scales high-precision float measurements to 8-bit (0-255) for packet transmission.
+ * This allows full measurements to fit in a 10-byte response packet.
  *
- * This allows coordinator to display actual measurements within 10-byte packet
+ * Resolution Trade-off:
+ *   - Voltage: 0-255 represents 0-130V RMS = 0.51 V/step resolution
+ *   - Current: 0-255 represents 0-2550 mA = 10 mA/step resolution
+ *
+ * The coordinator receives the scaled value and can reconstruct original range.
+ * Example: scaled_current = 128 (half scale) = 1275 mA ≈ 1.28A
  */
 
 uint8_t scale_voltage(float voltage_V) {
-  // Map 0-130V RMS to 0-255
+  // Map 0-130V RMS to 0-255 (resolution: 0.51 V/step)
   if (voltage_V < 0) return 0;
   if (voltage_V > 130.0) return 255;
   return (uint8_t)((voltage_V / 130.0) * 255.0);
 }
 
 uint8_t scale_current(float current_mA) {
-  // Map 0-2550 mA to 0-255
+  // Map 0-2550 mA to 0-255 (resolution: 10 mA/step)
   if (current_mA < 0) return 0;
   if (current_mA > 2550.0) return 255;
   return (uint8_t)((current_mA / 2550.0) * 255.0);
@@ -560,10 +642,17 @@ uint8_t scale_current(float current_mA) {
  * 1. Read all sensor ADC values
  * 2. Check for incoming LoRa packets from coordinator
  * 3. If packet is addressed to us:
- *    a. Evaluate sensor thresholds
- *    b. Build status bytes (0=OK, 1=ALERT)
- *    c. Transmit response back
+ *    a. Scale current measurements to 8-bit format
+ *    b. Build and send response packet back
  * 4. Small delay, then repeat
+ *
+ * NOTE: USE_ONLY_SENSOR1 Configuration
+ *   - When USE_ONLY_SENSOR1 = true: Only CURRENT_SENSOR1 is active
+ *   - CURRENT_SENSOR2/3/4 are set to 0.0A and unused
+ *   - This saves processing time and ADC reads
+ *   - Debug output shows detailed CURR1 data
+ *   - Filters for sensors 2-4 are still allocated but inactive
+ *   - To use all 4 sensors: Set USE_ONLY_SENSOR1 = false (line 287)
  */
 
 void loop() {
@@ -586,15 +675,41 @@ void loop() {
     }
   }
 
-  current_sensor1_A = readRMS_and_convertToCurrent(CURRENT_SENSOR1);
+  // ========================================================================
+  // CURRENT MEASUREMENT MODE SELECTION - Ternary Operator Example
+  // ========================================================================
+  // OPERATOR TERNARIO: condición ? valor_si_verdadero : valor_si_falso
+  // 
+  // Este es un "if/else" comprimido en una sola línea usando el operador ?:
+  // 
+  // Estructura:
+  //   (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(...) : readDC_and_convertToCurrent(...)
+  //                 ↑                          ↑                              ↑
+  //            CONDICIÓN                 SI VERDADERO                     SI FALSO
+  //
+  // En este caso:
+  //   - Si CURRENT_MEASUREMENT_AC = true  → Usa modo AC (RMS multiple)
+  //   - Si CURRENT_MEASUREMENT_AC = false → Usa modo DC (promedio simple)
+  //
+  // Es equivalente a:
+  //   if (CURRENT_MEASUREMENT_AC) {
+  //     current_sensor1_A = readRMS_and_convertToCurrent(CURRENT_SENSOR1);
+  //   } else {
+  //     current_sensor1_A = readDC_and_convertToCurrent(CURRENT_SENSOR1);
+  //   }
+  //
+  // Pero en una sola línea, más compacto. Muy común en C/C++.
+  // ========================================================================
+
+  current_sensor1_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR1) : readDC_and_convertToCurrent(CURRENT_SENSOR1);
   if (USE_ONLY_SENSOR1) {
     current_sensor2_A = 0.0;
     current_sensor3_A = 0.0;
     current_sensor4_A = 0.0;
   } else {
-    current_sensor2_A = readRMS_and_convertToCurrent(CURRENT_SENSOR2);
-    current_sensor3_A = readRMS_and_convertToCurrent(CURRENT_SENSOR3);
-    current_sensor4_A = readRMS_and_convertToCurrent(CURRENT_SENSOR4);
+    current_sensor2_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR2) : readDC_and_convertToCurrent(CURRENT_SENSOR2);
+    current_sensor3_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR3) : readDC_and_convertToCurrent(CURRENT_SENSOR3);
+    current_sensor4_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR4) : readDC_and_convertToCurrent(CURRENT_SENSOR4);
   }
   AC_voltage_V = readRMS_and_convertToVoltage(AC_POWER_PIN);
   
@@ -602,20 +717,29 @@ void loop() {
   if (SIMULATE_MODE) {
     unsigned long now = millis();
     if (now - lastSimUpdate >= 5000) {
-      // Generate new random values
+      // Generate new random values (all 4 sensors for completeness)
       sim_current1_A = random(0, 1201) / 1000.0f;      // 0-1200 mA → 0-1.200 A
-      sim_current2_A = random(0, 1201) / 1000.0f;
-      sim_current3_A = random(0, 1201) / 1000.0f;
-      sim_current4_A = random(0, 1201) / 1000.0f;
+      if (!USE_ONLY_SENSOR1) {
+        sim_current2_A = random(0, 1201) / 1000.0f;
+        sim_current3_A = random(0, 1201) / 1000.0f;
+        sim_current4_A = random(0, 1201) / 1000.0f;
+      }
       sim_voltage_V = 100.0f + (random(0, 501) / 10.0f);  // 100-150 V RMS
       lastSimUpdate = now;
-      Serial.printf("[SIM] New random values: I1=%.0fmA I2=%.0fmA I3=%.0fmA I4=%.0fmA V=%.1fV\n",
-        sim_current1_A * 1000, sim_current2_A * 1000, sim_current3_A * 1000, sim_current4_A * 1000, sim_voltage_V);
+      if (!USE_ONLY_SENSOR1) {
+        Serial.printf("[SIM] New random values: I1=%.0fmA I2=%.0fmA I3=%.0fmA I4=%.0fmA V=%.1fV\n",
+          sim_current1_A * 1000, sim_current2_A * 1000, sim_current3_A * 1000, sim_current4_A * 1000, sim_voltage_V);
+      } else {
+        Serial.printf("[SIM] New random value: I1=%.0fmA V=%.1fV\n",
+          sim_current1_A * 1000, sim_voltage_V);
+      }
     }
     current_sensor1_A = sim_current1_A;
-    current_sensor2_A = sim_current2_A;
-    current_sensor3_A = sim_current3_A;
-    current_sensor4_A = sim_current4_A;
+    if (!USE_ONLY_SENSOR1) {
+      current_sensor2_A = sim_current2_A;
+      current_sensor3_A = sim_current3_A;
+      current_sensor4_A = sim_current4_A;
+    }
     AC_voltage_V = sim_voltage_V;
     debug_raw_adc_avg = 1610.0;
     debug_rms_curr1 = 25.0;
@@ -645,9 +769,12 @@ void loop() {
     }
     Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
       current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
+    
+    // Detailed debug output (CURR1 only - others available if USE_ONLY_SENSOR1 is disabled)
     float vpp_mV = debug_max_mV - debug_min_mV;
-    Serial.printf("[DEBUG CURR1] AVG=%.1fmV RMS=%.2fmV Vpp=%.1fmV min=%.0fmV max=%.0fmV -> %.4fA (A/V=%.4f)\n",
-      debug_raw_adc_avg, debug_rms_curr1, vpp_mV, debug_min_mV, debug_max_mV, current_sensor1_A, CURRENT_RATIO);
+    const char* mode_str = (CURRENT_MEASUREMENT_AC) ? "AC(RMS×5)" : "DC(Avg)";
+    Serial.printf("[DEBUG CURR1] Offset=%.1fmV Diff=%.2fmV Vpp=%.1fmV min=%.0fmV max=%.0fmV -> %.4fA [%s]\n",
+      debug_raw_adc_avg, debug_rms_curr1, vpp_mV, debug_min_mV, debug_max_mV, current_sensor1_A, mode_str);
     lastPrint = now;
   }
 
