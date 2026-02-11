@@ -225,13 +225,21 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 #define RMS_ITERATIONS 5      // Number of RMS calculations to average (better noise rejection)
 
 // ACS712T-5A current sensor calibration with voltage divisor
-// Original sensor specs (5V operation):
-//   - Sensitivity: 185 mV/A
-//   - DC Offset: 2.5V (at zero current)
-// With voltage divisor (5V → 2.5V on ESP32 3.3V ADC line):
-//   - DCOffset_divisor = 2.5V / 2 = 1.25V
-//   - Sensitivity_divisor = 185mV/A / 2 = 92.5 mV/A
-const float ACS712_DC_OFFSET_V = 1.25f;        // DC offset voltage with divisor (1.25V)
+// Real installation specs:
+//   - External power supply: 5.4V (measured)
+//   - ACS712T sensitivity: 185 mV/A at VCC
+//   - DC Offset at zero current: VCC/2 = 5.4V/2 = 2.7V
+// With voltage divisor 1:2 (resistive divider to match ESP32 ADC 3.3V max):
+//   - Theoretical offset after divisor: 2.7V / 2 = 1.35V
+//   - ACTUAL measured offset: 1.55V (calibrated from real circuit)
+//   - Difference (0.20V) caused by resistor tolerances (±5% typical)
+//   - Sensitivity after divisor: 185mV/A / 2 = 92.5 mV/A
+// 
+// CALIBRATION NOTES:
+//   - Always use measured offset value (1.55V) for accurate zero-current reference
+//   - With 5.4V supply and divisor, safe ADC range: ~0.8V to 2.3V (well within 3.3V max)
+//   - Maximum measurable current: 5A → voltage swing: ±462.5mV from offset
+const float ACS712_DC_OFFSET_V = 1.55f;        // DC offset voltage with divisor (CALIBRATED from real measurement)
 const float ACS712_SENSITIVITY_mVpA = 92.5f;   // Sensitivity in mV/A (185mV/A ÷ 2 from divisor)
 const float ACS712_SENSITIVITY_VpA = ACS712_SENSITIVITY_mVpA / 1000.0f;  // Convert to V/A
 const float ACS712_MAX_CURRENT_A = 5.0f;       // Maximum measurable current (5A)
