@@ -126,8 +126,8 @@ FREQUENCY = 433E6                  # LoRa frequency (Hz)
 # HMI THRESHOLDS
 VOLTAGE_MIN = 100.0                # Minimum acceptable voltage (V)
 VOLTAGE_MAX = 135.0                # Maximum acceptable voltage (V)
-CURRENT_MIN = 500.0                # Minimum acceptable current per lamp (mA)
-CURRENT_MAX = 1200.0               # Maximum acceptable current per lamp (mA)
+CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
+CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
 
 # DEMO MODE (for testing without real hardware)
 DEMO_MODE = False                  # Set to False for real hardware testing with ESP32
