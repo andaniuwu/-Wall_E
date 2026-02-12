@@ -198,14 +198,14 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
  *   - ADC resolution: 3.3V / 4095 = 0.8056 mV per step
  *   - Safe input range with 5.4V supply: ~1.1V to 2.0V (well within 3.3V ADC max)
  *   
- * ZMPT101B AC Voltage Sensor Calibration:
- *   - Input: 120V RMS AC mains
- *   - Peak voltage: 120V RMS × √2 = 169.7V peak
- *   - DC Offset: Fixed 1.65V (mid-point of 3.3V)
- *   - ADC output range: 1.36V min to 2.0V max
- *   - Peak AC voltage: (2.0V - 1.36V) / 2 = 0.32V peak
- *   - RMS AC voltage: 0.32V peak / √2 = 0.226V RMS
- *   - Conversion ratio: 120V RMS / 0.226V RMS = 531 V/V
+ * ZMPT101B AC Voltage Sensor Calibration (with 1:2 divider 860 ohm / 860 ohm):
+ *   - Supply: 5.43V (measured)
+ *   - Input: 118V RMS AC mains (measured with multimeter)
+ *   - Measured RMS at sensor output BEFORE divider: 0.212V RMS
+ *   - Divider 1:2 -> RMS at ADC AFTER divider: 0.106V RMS
+ *   - Conversion ratio: 118V RMS / 0.106V RMS = 1113 V/V
+ *   - DC offset (before divider): 2.716V (AC disconnected)
+ *   - DC offset (after divider): 1.358V
  *   - Alert threshold: < 100V RMS
  *   
  * MEASUREMENT PROCESS FOR ACS712T:
@@ -245,7 +245,7 @@ const float ACS712_SENSITIVITY_mVpA = 92.5f;   // Sensitivity in mV/A (185mV/A �
 const float ACS712_SENSITIVITY_VpA = ACS712_SENSITIVITY_mVpA / 1000.0f;  // Convert to V/A
 const float ACS712_MAX_CURRENT_A = 5.0f;       // Maximum measurable current (5A)
 
-#define VOLTAGE_RATIO 531     // ZMPT101B conversion: 531 V/V (120V RMS / 0.226V RMS)
+#define VOLTAGE_RATIO 1113    // ZMPT101B conversion: 1113 V/V (118V RMS / 0.106V RMS after divider)
 #define CURRENT_FLOOR_A 0.0   // Readings below this are clamped to 0A (noise suppression)
 
 // Enable/disable multi-sensor reading: true = CURR1 only, false = all 4 sensors
