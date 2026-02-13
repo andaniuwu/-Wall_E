@@ -311,6 +311,7 @@ def send_request(device_id):
         time.sleep(0.01)
         
         if not tx_complete:
+            print(f"[TX ERROR] Device {device_id}: TX timeout! IRQ=0x{irq_flags:02X}")
             return False
         
         return True
@@ -618,6 +619,9 @@ class AppIndustrial:
         self.sonido_habil = True  
         self.falla_activa = False
         self.torreta_red_active = False
+        self.torreta_yellow_active = False
+        self.torreta_green_active = False
+        self.last_tower_state = None  # Track last tower state to reduce updates
         self.last_buzzer_time = 0.0
         self.buzzer_active = False
         self.buzzer_off_time = 0.0
@@ -772,30 +776,69 @@ class AppIndustrial:
             yellow_active = (not red_active) and total_out_of_range == 1
             green_active = (not red_active) and (not yellow_active)
 
-            set_relay(PIN_GREEN_TURRET, green_active)
-            set_relay(PIN_YELLOW_TURRET, yellow_active)
-            set_relay(PIN_RED_TURRET, red_active)
+            # Only update relays if state changed to reduce GPIO interference with SPI
+            if green_active != self.torreta_green_active:
+                set_relay(PIN_GREEN_TURRET, green_active)
+                self.torreta_green_active = green_active
+                
+            if yellow_active != self.torreta_yellow_active:
+                set_relay(PIN_YELLOW_TURRET, yellow_active)
+                self.torreta_yellow_active = yellow_active
+            
+            # Save old red state before updating
+            red_was_active = self.torreta_red_active
+            if red_active != self.torreta_red_active:
+                set_relay(PIN_RED_TURRET, red_active)
+                self.torreta_red_active = red_active
 
             now = time.time()
 
+            # Buzzer logic: Only works when red is active
             if red_active and self.sonido_habil:
-                if not self.torreta_red_active:
+                # If red just turned on, initialize buzzer timer
+                if not red_was_active:
                     self.last_buzzer_time = now - 10.0
+                    print(f"[BUZZER] Rojo activado, buzzer inicializado")
+                # Trigger buzzer every 10 seconds
                 if not self.buzzer_active and (now - self.last_buzzer_time) >= 10.0:
                     set_relay(PIN_BUZZER, True)
                     self.buzzer_active = True
                     self.buzzer_off_time = now + 1.0
                     self.last_buzzer_time = now
+                    print(f"[BUZZER] ON a los {now - self.last_buzzer_time:.1f}s")
+                # Turn off buzzer after 1 second
                 if self.buzzer_active and now >= self.buzzer_off_time:
                     set_relay(PIN_BUZZER, False)
                     self.buzzer_active = False
+                    print(f"[BUZZER] OFF después de 1s")
             else:
-                set_relay(PIN_BUZZER, False)
-                self.buzzer_active = False
-
-            self.torreta_red_active = red_active
-        except:
-            pass
+                # Red is not active, make sure buzzer is off
+                if self.buzzer_active:
+                    set_relay(PIN_BUZZER, False)
+                    self.buzzer_active = False
+        except Exception as e:
+            print(f"[TOWER ERROR] {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def actualizar_buzzer(self):
+        """Update buzzer independently every 100ms to ensure it triggers while red is active"""
+        if not self.torreta_red_active or not self.sonido_habil:
+            return
+        
+        now = time.time()
+        # Trigger buzzer every 10 seconds
+        if not self.buzzer_active and (now - self.last_buzzer_time) >= 10.0:
+            set_relay(PIN_BUZZER, True)
+            self.buzzer_active = True
+            self.buzzer_off_time = now + 1.0
+            self.last_buzzer_time = now
+            print(f"[BUZZER] Sonido ON")
+        # Turn off buzzer after 1 second
+        if self.buzzer_active and now >= self.buzzer_off_time:
+            set_relay(PIN_BUZZER, False)
+            self.buzzer_active = False
+            print(f"[BUZZER] Sonido OFF")
 
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
@@ -873,8 +916,14 @@ class AppIndustrial:
         except Exception as e:
             print(f"HMI update error: {e}")
 
-        # Update tower status based on system health
-        self.actualizar_torreta(total_out_of_range, stale_detected)
+        # Update tower status based on system health (only if state changed)
+        current_state = (total_out_of_range, stale_detected)
+        if current_state != self.last_tower_state:
+            self.actualizar_torreta(total_out_of_range, stale_detected)
+            self.last_tower_state = current_state
+        
+        # Update buzzer independently (called every 1 second)
+        self.actualizar_buzzer()
 
         if total_out_of_range > 0 or stale_detected:
             self.activar_alerta("FALLA SISTEMA")
