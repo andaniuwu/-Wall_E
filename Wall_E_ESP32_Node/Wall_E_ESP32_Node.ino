@@ -237,13 +237,21 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 //   - Sensitivity after divisor: 185mV/A / 2 = 92.5 mV/A
 // 
 // CALIBRATION NOTES:
-//   - Always use measured offset value (1.55V) for accurate zero-current reference
-//   - With 5.4V supply and divisor, safe ADC range: ~0.8V to 2.3V (well within 3.3V max)
+//   - Always use measured offset value for accurate zero-current reference
+//   - With 4.96V supply and divisor, safe ADC range: ~0.8V to 2.3V (well within 3.3V max)
 //   - Maximum measurable current: 5A → voltage swing: ±462.5mV from offset
-const float ACS712_DC_OFFSET_V = 1.55f;        // DC offset voltage with divisor (CALIBRATED from real measurement)
+//   - CALIBRATION: Offset varies with supply voltage
+//     * 5.4V supply → 1.55V offset (old calibration)
+//     * 4.96V supply → 1.245V offset (average of measured values)
+//       Measured values: S1=1.254V, S2=1.256V, S3=1.229V, S4=1.263V (avg=1.245V)
+//   - SOFTWARE CORRECTION: After RMS calculation, subtract 40mA baseline offset
+//     This compensates for residual readings (30-50mA observed with no load)
+//     caused by ADC noise, sensor variation, and signal conditioning artifacts.
+const float ACS712_DC_OFFSET_V = 1.245f;       // DC offset voltage with divisor (CALIBRATED at 4.96V supply)
 const float ACS712_SENSITIVITY_mVpA = 92.5f;   // Sensitivity in mV/A (185mV/A ÷ 2 from divisor)
 const float ACS712_SENSITIVITY_VpA = ACS712_SENSITIVITY_mVpA / 1000.0f;  // Convert to V/A
 const float ACS712_MAX_CURRENT_A = 5.0f;       // Maximum measurable current (5A)
+const float ACS712_BASELINE_CORRECTION_A = 0.040f;  // Software correction: subtract 40mA baseline (measured residual)
 
 // ZMPT101B Voltage Sensor Calibration Constants
 // =============================================
@@ -564,6 +572,11 @@ float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES, 
 
     // Convert this RMS voltage to current
     float current_A = (rms_voltage_mV / 1000.0f) / ACS712_SENSITIVITY_VpA;
+    
+    // Apply software baseline correction (subtract residual ~40mA)
+    current_A -= ACS712_BASELINE_CORRECTION_A;
+    
+    // Clamp to valid range after correction
     if (current_A < 0.0f) current_A = 0.0f;
     if (current_A > ACS712_MAX_CURRENT_A) current_A = ACS712_MAX_CURRENT_A;
     
