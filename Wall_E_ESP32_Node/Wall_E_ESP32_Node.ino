@@ -245,7 +245,22 @@ const float ACS712_SENSITIVITY_mVpA = 92.5f;   // Sensitivity in mV/A (185mV/A �
 const float ACS712_SENSITIVITY_VpA = ACS712_SENSITIVITY_mVpA / 1000.0f;  // Convert to V/A
 const float ACS712_MAX_CURRENT_A = 5.0f;       // Maximum measurable current (5A)
 
-#define VOLTAGE_RATIO 1113    // ZMPT101B conversion: 1113 V/V (118V RMS / 0.106V RMS after divider)
+// ZMPT101B Voltage Sensor Calibration Constants
+// =============================================
+// VOLTAGE_RATIO: Conversion factor from ADC millivolts to actual mains voltage
+//   - Measured mains RMS: 119.8V (with calibrated multimeter)
+//   - ADC reads: 102mV RMS (after 1:2 voltage divider)
+//   - Ratio: 119.8V / 0.102V = 1175 V/V
+#define VOLTAGE_RATIO 1175
+
+// ZMPT_OFFSET_mV: Systematic offset correction for ADC readings
+//   Root Cause: The ESP32 ADC and signal conditioning have a ~7mV systematic bias
+//   when measuring the ZMPT101B AC output. This was discovered through calibration:
+//   - Multimeter measured ADC pin: 102mV RMS (true value)
+//   - ESP32 code calculated: 109mV RMS (7mV too high)
+//   - After correction: 109 - 7 = 102mV → 102 × 1175 = 119.8V (correct!)
+//   - Without this correction, voltage would read 8V too high (±5.2% error)
+#define ZMPT_OFFSET_mV 7.0f
 #define CURRENT_FLOOR_A 0.0   // Readings below this are clamped to 0A (noise suppression)
 
 // Enable/disable multi-sensor reading: true = CURR1 only, false = all 4 sensors
@@ -590,26 +605,41 @@ float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
   float sumSquares = 0.0f;
   float sum_mV = 0.0f;
 
-  // Take samples and accumulate squared values
+  // Take samples and accumulate squared values for RMS calculation
   for (uint16_t i = 0; i < samples; i++) {
     int raw_mV = analogReadMilliVolts(pin);
 
     sum_mV += raw_mV;
     sumSquares += (float)raw_mV * (float)raw_mV;
 
-    delayMicroseconds(100);  // Small delay between samples
+    delayMicroseconds(100);  // 100µs delay = ~10ms per 100 samples (covers multiple 50/60Hz mains cycles)
   }
 
   // Calculate RMS using mean-centering: rms = sqrt(E[x^2] - (E[x])^2)
+  // This method is robust to DC offset and sensor bias in the data
   float mean_mV = sum_mV / (float)samples;
   float meanSquares = (sumSquares / (float)samples) - (mean_mV * mean_mV);
   if (meanSquares < 0.0f) {
-    meanSquares = 0.0f;
+    meanSquares = 0.0f;  // Clamp to zero if numerical error causes negative variance
   }
   float rms_voltage_mV = sqrtf(meanSquares);
 
-  // Convert RMS voltage to actual mains voltage using calibration ratio
-  float voltage_V = (rms_voltage_mV / 1000.0f) * VOLTAGE_RATIO;
+  // Apply systematic offset correction: ADC reads ~7mV higher than actual sensor output
+  // Root cause: ESP32 ADC and signal conditioning have systematic bias
+  // Calibration data:
+  //   - Measured mains voltage (multimeter): 119.8V RMS
+  //   - ADC pin voltage (multimeter): 102mV RMS
+  //   - Calculated by code (before correction): 109mV RMS
+  //   - Correction value: -7mV to align with true measurement
+  // Without this correction: voltage would read 127V (±5.2% error)
+  float rms_voltage_corrected_mV = rms_voltage_mV - ZMPT_OFFSET_mV;
+  if (rms_voltage_corrected_mV < 0.0f) {
+    rms_voltage_corrected_mV = 0.0f;  // Clamp to zero if correction overshoots
+  }
+
+  // Convert RMS voltage (in millivolts) to actual mains voltage using calibration ratio
+  // VOLTAGE_RATIO = 1175 V/V means: 1mV at ADC input × 1175 = 1.175V at mains output
+  float voltage_V = (rms_voltage_corrected_mV / 1000.0f) * VOLTAGE_RATIO;
 
   return voltage_V;
 }
