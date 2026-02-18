@@ -735,7 +735,7 @@ class AppIndustrial:
         b_style = {"font": ("Arial", 8, "bold"), "bg": "#ffc72c", "height": 2, "activebackground": "#e6b422"}
         
         tk.Button(self.f_btn, text="SILENCIAR", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="RESET", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="ACTIVAR SONIDO + RESET", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
         tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
         tk.Button(self.f_btn, text="MAPA", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
         tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
