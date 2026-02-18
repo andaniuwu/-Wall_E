@@ -687,181 +687,26 @@ uint8_t scale_current(float current_mA) {
 }
 
 // ============================================================================
-// MAIN LOOP - Continuous Execution
+// CHECK FOR LORA PACKETS - Helper Function
 // ============================================================================
 /*
- * OPERATION FLOW:
- * 1. Read all sensor ADC values
- * 2. Check for incoming LoRa packets from coordinator
- * 3. If packet is addressed to us:
- *    a. Scale current measurements to 8-bit format
- *    b. Build and send response packet back
- * 4. Small delay, then repeat
- *
- * NOTE: USE_ONLY_SENSOR1 Configuration
- *   - When USE_ONLY_SENSOR1 = true: Only CURRENT_SENSOR1 is active
- *   - CURRENT_SENSOR2/3/4 are set to 0.0A and unused
- *   - This saves processing time and ADC reads
- *   - Debug output shows detailed CURR1 data
- *   - Filters for sensors 2-4 are still allocated but inactive
- *   - To use all 4 sensors: Set USE_ONLY_SENSOR1 = false (line 287)
+ * This function checks for incoming LoRa packets and processes them if valid.
+ * It's called MULTIPLE TIMES per loop cycle to avoid missing packets while
+ * performing sensor readings (~150ms total blocking time for 5 sensors).
+ * 
+ * STRATEGY: Call between sensor readings to create multiple "RX windows"
+ *   - Before sensor readings
+ *   - After sensor 1 (30ms gap)
+ *   - After sensor 2 (30ms gap)
+ *   - After sensor 3 (30ms gap)
+ *   - After sensor 4 (30ms gap)
+ *   - After voltage sensor (30ms gap)
+ * 
+ * This reduces max packet loss window from 150ms to ~30ms per window!
  */
-
-void loop() {
-
-  // Pulso azul en standby para indicar que el loop está activo
-  static unsigned long lastPulse = 0;
-  static bool pulseState = false;
-  unsigned long now = millis();
-  if (now - lastPulse > 1000) { // cada 1 segundo
-    if (!pulseState) {
-      neopixel.setPixelColor(0, COLOR_OFF);
-      neopixel.show();
-      pulseState = true;
-      lastPulse = now;
-    } else {
-      neopixel.setPixelColor(0, COLOR_BLUE);
-      neopixel.show();
-      pulseState = false;
-      lastPulse = now;
-    }
-  }
-
-  // ========================================================================
-  // CURRENT MEASUREMENT MODE SELECTION - Ternary Operator Example
-  // ========================================================================
-  // OPERATOR TERNARIO: condición ? valor_si_verdadero : valor_si_falso
-  // 
-  // Este es un "if/else" comprimido en una sola línea usando el operador ?:
-  // 
-  // Estructura:
-  //   (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(...) : readDC_and_convertToCurrent(...)
-  //                 ↑                          ↑                              ↑
-  //            CONDICIÓN                 SI VERDADERO                     SI FALSO
-  //
-  // En este caso:
-  //   - Si CURRENT_MEASUREMENT_AC = true  → Usa modo AC (RMS multiple)
-  //   - Si CURRENT_MEASUREMENT_AC = false → Usa modo DC (promedio simple)
-  //
-  // Es equivalente a:
-  //   if (CURRENT_MEASUREMENT_AC) {
-  //     current_sensor1_A = readRMS_and_convertToCurrent(CURRENT_SENSOR1);
-  //   } else {
-  //     current_sensor1_A = readDC_and_convertToCurrent(CURRENT_SENSOR1);
-  //   }
-  //
-  // Pero en una sola línea, más compacto. Muy común en C/C++.
-  // ========================================================================
-
-  current_sensor1_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR1) : readDC_and_convertToCurrent(CURRENT_SENSOR1);
-  if (USE_ONLY_SENSOR1) {
-    current_sensor2_A = 0.0;
-    current_sensor3_A = 0.0;
-    current_sensor4_A = 0.0;
-  } else {
-    current_sensor2_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR2) : readDC_and_convertToCurrent(CURRENT_SENSOR2);
-    current_sensor3_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR3) : readDC_and_convertToCurrent(CURRENT_SENSOR3);
-    current_sensor4_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR4) : readDC_and_convertToCurrent(CURRENT_SENSOR4);
-  }
-  AC_voltage_V = readRMS_and_convertToVoltage(AC_POWER_PIN);
-  
-  // SIMULATION MODE: Generate random values every 5 seconds
-  if (SIMULATE_MODE) {
-    unsigned long now = millis();
-    if (now - lastSimUpdate >= 5000) {
-      // Generate new random values (all 4 sensors for completeness)
-      sim_current1_A = random(0, 1201) / 1000.0f;      // 0-1200 mA → 0-1.200 A
-      if (!USE_ONLY_SENSOR1) {
-        sim_current2_A = random(0, 1201) / 1000.0f;
-        sim_current3_A = random(0, 1201) / 1000.0f;
-        sim_current4_A = random(0, 1201) / 1000.0f;
-      }
-      sim_voltage_V = 100.0f + (random(0, 501) / 10.0f);  // 100-150 V RMS
-      lastSimUpdate = now;
-      if (!USE_ONLY_SENSOR1) {
-        Serial.printf("[SIM] New random values: I1=%.0fmA I2=%.0fmA I3=%.0fmA I4=%.0fmA V=%.1fV\n",
-          sim_current1_A * 1000, sim_current2_A * 1000, sim_current3_A * 1000, sim_current4_A * 1000, sim_voltage_V);
-      } else {
-        Serial.printf("[SIM] New random value: I1=%.0fmA V=%.1fV\n",
-          sim_current1_A * 1000, sim_voltage_V);
-      }
-    }
-    current_sensor1_A = sim_current1_A;
-    if (!USE_ONLY_SENSOR1) {
-      current_sensor2_A = sim_current2_A;
-      current_sensor3_A = sim_current3_A;
-      current_sensor4_A = sim_current4_A;
-    }
-    AC_voltage_V = sim_voltage_V;
-    // Simulated debug values (consistent with 1.55V offset and typical AC readings)
-    debug_raw_adc_avg = ACS712_DC_OFFSET_V * 1000.0f;  // 1550mV - current offset
-    debug_rms_curr1 = 25.0;  // Simulated RMS voltage swing (typical for ~0.5A AC)
-    debug_min_mV = 1450.0;   // Min ADC reading in simulation
-    debug_max_mV = 1650.0;   // Max ADC reading in simulation
-  }
-  
-  // Apply moving average filter to smooth readings
-  current_sensor1_A = applyMovingAverage(current_sensor1_A, filter_curr1, filter_index1);
-  if (!USE_ONLY_SENSOR1) {
-    current_sensor2_A = applyMovingAverage(current_sensor2_A, filter_curr2, filter_index2);
-    current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
-    current_sensor4_A = applyMovingAverage(current_sensor4_A, filter_curr4, filter_index4);
-  }
-  
-  // Apply noise floor: clamp weak readings to 0A
-  if (current_sensor1_A < CURRENT_FLOOR_A) current_sensor1_A = 0.0;
-  if (current_sensor2_A < CURRENT_FLOOR_A) current_sensor2_A = 0.0;
-  if (current_sensor3_A < CURRENT_FLOOR_A) current_sensor3_A = 0.0;
-  if (current_sensor4_A < CURRENT_FLOOR_A) current_sensor4_A = 0.0;
-  
-  // Print readings to serial monitor once per second
-  static unsigned long lastPrint = 0;
-  if (now - lastPrint >= 1000) {
-    if (SIMULATE_MODE) {
-      Serial.println("*** SIMULATION MODE ACTIVE ***");
-    }
-    Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
-      current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
-    
-    // Detailed debug output (CURR1 only - others available if USE_ONLY_SENSOR1 is disabled)
-    float vpp_mV = debug_max_mV - debug_min_mV;
-    const char* mode_str = (CURRENT_MEASUREMENT_AC) ? "AC(RMS×5)" : "DC(Avg)";
-    Serial.printf("[DEBUG CURR1] Offset=%.1fmV Diff=%.2fmV Vpp=%.1fmV min=%.0fmV max=%.0fmV -> %.4fA [%s]\n",
-      debug_raw_adc_avg, debug_rms_curr1, vpp_mV, debug_min_mV, debug_max_mV, current_sensor1_A, mode_str);
-    lastPrint = now;
-  }
-
-  // ========================================================================
-  // STEP 2: CHECK FOR INCOMING LORA PACKETS (REQUEST FROM COORDINATOR)
-  // ========================================================================
-  /*
-   * LoRa.parsePacket() returns packet size if data available, 0 otherwise
-   * This is non-blocking - we don't wait, just check
-   * 
-   * IMPORTANT OPTIMIZATION (Feb 2026):
-   * =====================================
-   * PROBLEM: In a multi-node network, this device receives ALL broadcast packets
-   *          (for device 1, 2, 3...9). If we print debug info for EVERY packet,
-   *          we waste ~50-100ms processing Serial.printf() calls.
-   *          During that time, we MISS our own packets!
-   * 
-   * Example scenario (Device 1):
-   *   - Receives packet for Device 2 → spends 50ms printing debug info
-   *   - While printing, coordinator sends packet for Device 1
-   *   - Device 1 misses its own packet because it's busy with Serial prints!
-   * 
-   * SOLUTION: Fast rejection strategy:
-   *   1. DON'T print anything until we validate if packet is for us
-   *   2. Read 4 bytes and check target ID immediately (~2-5ms)
-   *   3. If NOT for us → return to RX mode instantly (no prints!)
-   *   4. If FOR us → THEN print debug info and process
-   * 
-   * RESULT: Rejection time reduced from ~50-100ms to ~2-5ms
-   *         Now successfully captures all packets destined for this device!
-   */
-
+void checkLoRaPackets() {
   int packetSize = LoRa.parsePacket();
-
+  
   if (packetSize > 0) {
     // Recibiendo paquete: morado
     neopixel.setPixelColor(0, COLOR_PURPLE);
@@ -886,7 +731,7 @@ void loop() {
       uint8_t req     = LoRa.read();    // Byte 3: Request code
 
       // ====================================================================
-      // STEP 3: VALIDATE REQUEST (Fast Rejection Strategy)
+      // VALIDATE REQUEST (Fast Rejection Strategy)
       // ====================================================================
       // Quick validation: check target ID first, print only if it's for us.
       // This minimizes processing time for packets destined to other nodes.
@@ -963,6 +808,169 @@ void loop() {
         neopixel.show();
       }
     }
+  }
+}
+
+// ============================================================================
+// MAIN LOOP - Continuous Execution
+// ============================================================================
+/*
+ * OPERATION FLOW:
+ * 1. Check for LoRa packets (before sensor readings)
+ * 2. Read sensor 1 → Check LoRa (30ms window)
+ * 3. Read sensor 2 → Check LoRa (30ms window)
+ * 4. Read sensor 3 → Check LoRa (30ms window)
+ * 5. Read sensor 4 → Check LoRa (30ms window)
+ * 6. Read voltage → Check LoRa (30ms window)
+ * 7. Process/filter data
+ * 8. Small delay, then repeat
+ *
+ * CRITICAL OPTIMIZATION: Multiple LoRa checks per loop!
+ *   - OLD: Sensors readings (~150ms) THEN check LoRa → High packet loss!
+ *   - NEW: Check LoRa BETWEEN each sensor → Max 30ms window → Low packet loss!
+ *
+ * NOTE: USE_ONLY_SENSOR1 Configuration
+ *   - When USE_ONLY_SENSOR1 = true: Only CURRENT_SENSOR1 is active
+ *   - CURRENT_SENSOR2/3/4 are set to 0.0A and unused
+ *   - This saves processing time and ADC reads
+ *   - Debug output shows detailed CURR1 data
+ *   - Filters for sensors 2-4 are still allocated but inactive
+ *   - To use all 4 sensors: Set USE_ONLY_SENSOR1 = false (line 287)
+ */
+
+void loop() {
+
+  // Pulso azul en standby para indicar que el loop está activo
+  static unsigned long lastPulse = 0;
+  static bool pulseState = false;
+  unsigned long now = millis();
+  if (now - lastPulse > 1000) { // cada 1 segundo
+    if (!pulseState) {
+      neopixel.setPixelColor(0, COLOR_OFF);
+      neopixel.show();
+      pulseState = true;
+      lastPulse = now;
+    } else {
+      neopixel.setPixelColor(0, COLOR_BLUE);
+      neopixel.show();
+      pulseState = false;
+      lastPulse = now;
+    }
+  }
+
+  // ========================================================================
+  // CURRENT MEASUREMENT MODE SELECTION - Ternary Operator Example
+  // ========================================================================
+  // OPERATOR TERNARIO: condición ? valor_si_verdadero : valor_si_falso
+  // 
+  // Este es un "if/else" comprimido en una sola línea usando el operador ?:
+  // 
+  // Estructura:
+  //   (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(...) : readDC_and_convertToCurrent(...)
+  //                 ↑                          ↑                              ↑
+  //            CONDICIÓN                 SI VERDADERO                     SI FALSO
+  //
+  // En este caso:
+  //   - Si CURRENT_MEASUREMENT_AC = true  → Usa modo AC (RMS multiple)
+  //   - Si CURRENT_MEASUREMENT_AC = false → Usa modo DC (promedio simple)
+  //
+  // Es equivalente a:
+  //   if (CURRENT_MEASUREMENT_AC) {
+  //     current_sensor1_A = readRMS_and_convertToCurrent(CURRENT_SENSOR1);
+  //   } else {
+  //     current_sensor1_A = readDC_and_convertToCurrent(CURRENT_SENSOR1);
+  //   }
+  //
+  // Pero en una sola línea, más compacto. Muy común en C/C++.
+  // ========================================================================
+
+  // Check LoRa before readings to catch queued packets
+  checkLoRaPackets();
+
+  current_sensor1_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR1) : readDC_and_convertToCurrent(CURRENT_SENSOR1);
+  checkLoRaPackets();
+
+  if (USE_ONLY_SENSOR1) {
+    current_sensor2_A = 0.0;
+    current_sensor3_A = 0.0;
+    current_sensor4_A = 0.0;
+  } else {
+    current_sensor2_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR2) : readDC_and_convertToCurrent(CURRENT_SENSOR2);
+    checkLoRaPackets();
+
+    current_sensor3_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR3) : readDC_and_convertToCurrent(CURRENT_SENSOR3);
+    checkLoRaPackets();
+
+    current_sensor4_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR4) : readDC_and_convertToCurrent(CURRENT_SENSOR4);
+    checkLoRaPackets();
+  }
+  AC_voltage_V = readRMS_and_convertToVoltage(AC_POWER_PIN);
+  checkLoRaPackets();
+  
+  // SIMULATION MODE: Generate random values every 5 seconds
+  if (SIMULATE_MODE) {
+    unsigned long now = millis();
+    if (now - lastSimUpdate >= 5000) {
+      // Generate new random values (all 4 sensors for completeness)
+      sim_current1_A = random(0, 1201) / 1000.0f;      // 0-1200 mA → 0-1.200 A
+      if (!USE_ONLY_SENSOR1) {
+        sim_current2_A = random(0, 1201) / 1000.0f;
+        sim_current3_A = random(0, 1201) / 1000.0f;
+        sim_current4_A = random(0, 1201) / 1000.0f;
+      }
+      sim_voltage_V = 100.0f + (random(0, 501) / 10.0f);  // 100-150 V RMS
+      lastSimUpdate = now;
+      if (!USE_ONLY_SENSOR1) {
+        Serial.printf("[SIM] New random values: I1=%.0fmA I2=%.0fmA I3=%.0fmA I4=%.0fmA V=%.1fV\n",
+          sim_current1_A * 1000, sim_current2_A * 1000, sim_current3_A * 1000, sim_current4_A * 1000, sim_voltage_V);
+      } else {
+        Serial.printf("[SIM] New random value: I1=%.0fmA V=%.1fV\n",
+          sim_current1_A * 1000, sim_voltage_V);
+      }
+    }
+    current_sensor1_A = sim_current1_A;
+    if (!USE_ONLY_SENSOR1) {
+      current_sensor2_A = sim_current2_A;
+      current_sensor3_A = sim_current3_A;
+      current_sensor4_A = sim_current4_A;
+    }
+    AC_voltage_V = sim_voltage_V;
+    // Simulated debug values (consistent with 1.55V offset and typical AC readings)
+    debug_raw_adc_avg = ACS712_DC_OFFSET_V * 1000.0f;  // 1550mV - current offset
+    debug_rms_curr1 = 25.0;  // Simulated RMS voltage swing (typical for ~0.5A AC)
+    debug_min_mV = 1450.0;   // Min ADC reading in simulation
+    debug_max_mV = 1650.0;   // Max ADC reading in simulation
+  }
+  
+  // Apply moving average filter to smooth readings
+  current_sensor1_A = applyMovingAverage(current_sensor1_A, filter_curr1, filter_index1);
+  if (!USE_ONLY_SENSOR1) {
+    current_sensor2_A = applyMovingAverage(current_sensor2_A, filter_curr2, filter_index2);
+    current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
+    current_sensor4_A = applyMovingAverage(current_sensor4_A, filter_curr4, filter_index4);
+  }
+  
+  // Apply noise floor: clamp weak readings to 0A
+  if (current_sensor1_A < CURRENT_FLOOR_A) current_sensor1_A = 0.0;
+  if (current_sensor2_A < CURRENT_FLOOR_A) current_sensor2_A = 0.0;
+  if (current_sensor3_A < CURRENT_FLOOR_A) current_sensor3_A = 0.0;
+  if (current_sensor4_A < CURRENT_FLOOR_A) current_sensor4_A = 0.0;
+  
+  // Print readings to serial monitor once per second
+  static unsigned long lastPrint = 0;
+  if (now - lastPrint >= 1000) {
+    if (SIMULATE_MODE) {
+      Serial.println("*** SIMULATION MODE ACTIVE ***");
+    }
+    Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
+      current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
+    
+    // Detailed debug output (CURR1 only - others available if USE_ONLY_SENSOR1 is disabled)
+    float vpp_mV = debug_max_mV - debug_min_mV;
+    const char* mode_str = (CURRENT_MEASUREMENT_AC) ? "AC(RMS×5)" : "DC(Avg)";
+    Serial.printf("[DEBUG CURR1] Offset=%.1fmV Diff=%.2fmV Vpp=%.1fmV min=%.0fmV max=%.0fmV -> %.4fA [%s]\n",
+      debug_raw_adc_avg, debug_rms_curr1, vpp_mV, debug_min_mV, debug_max_mV, current_sensor1_A, mode_str);
+    lastPrint = now;
   }
 
   // ========================================================================
