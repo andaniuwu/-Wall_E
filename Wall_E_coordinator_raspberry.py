@@ -129,6 +129,11 @@ VOLTAGE_MAX = 135.0                # Maximum acceptable voltage (V)
 CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
 
+# ALARM TOLERANCE CONFIGURATION
+MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before triggering alarm
+                                   # This prevents false alarms during LoRa module recovery
+                                   # With QUERY_INTERVAL=5s, 3 failures = 15 seconds tolerance
+
 # DEMO MODE (for testing without real hardware)
 DEMO_MODE = False                  # Set to False for real hardware testing with ESP32
 DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
@@ -140,6 +145,7 @@ DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 spi = None
 last_response = {}                 # Track last response from each device
 device_stats = {}                  # Statistics for each device
+device_consecutive_failures = {}   # Track consecutive failures per device for alarm tolerance
 
 # Shared data structure for HMI (thread-safe)
 device_data_lock = threading.Lock()
@@ -436,7 +442,7 @@ def parse_response(packet, device_id):
 
 def query_device(device_id):
     """Query single device and collect response"""
-    global current_scanning_device, device_data_lock
+    global current_scanning_device, device_data_lock, device_consecutive_failures
     
     # Update shared variable so HMI knows which device we're scanning
     with device_data_lock:
@@ -465,6 +471,10 @@ def query_device(device_id):
                         }
                     device_stats[device_id]['responses'] += 1
                     device_stats[device_id]['last_status'] = response
+                    
+                    # Reset consecutive failure counter on successful response
+                    device_consecutive_failures[device_id] = 0
+                    
                     return response
                 else:
                     pass
@@ -473,11 +483,24 @@ def query_device(device_id):
         else:
             pass
         time.sleep(0.2)
+    
     # Update failure count
     if device_id not in device_stats:
         device_stats[device_id] = {'responses': 0, 'failures': 0, 'last_status': None}
     device_stats[device_id]['failures'] += 1
-    print("✗ No response")
+    
+    # Increment consecutive failure counter
+    if device_id not in device_consecutive_failures:
+        device_consecutive_failures[device_id] = 0
+    device_consecutive_failures[device_id] += 1
+    
+    # Display failure message with tolerance info
+    consecutive_count = device_consecutive_failures[device_id]
+    if consecutive_count >= MAX_CONSECUTIVE_FAILURES:
+        print(f"✗ No response ({consecutive_count} consecutive failures - ALARM ACTIVE)")
+    else:
+        print(f"✗ No response ({consecutive_count}/{MAX_CONSECUTIVE_FAILURES} until alarm)")
+    
     return None
 
 def query_all_devices():
@@ -769,10 +792,16 @@ class AppIndustrial:
         self.test_mode = False
         self.registrar_log("TEST MODE OFF")
 
-    def actualizar_torreta(self, total_out_of_range, stale_detected):
-        """Update physical tower light and buzzer based on system health"""
+    def actualizar_torreta(self, total_out_of_range, communication_failure):
+        """
+        Update physical tower light and buzzer based on system health
+        
+        Args:
+            total_out_of_range: Number of sensors outside acceptable thresholds
+            communication_failure: True if any device has >= MAX_CONSECUTIVE_FAILURES
+        """
         try:
-            red_active = stale_detected or total_out_of_range >= 2
+            red_active = communication_failure or total_out_of_range >= 2
             yellow_active = (not red_active) and total_out_of_range == 1
             green_active = (not red_active) and (not yellow_active)
 
@@ -842,11 +871,11 @@ class AppIndustrial:
 
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
-        global shared_device_data, device_data_lock
+        global shared_device_data, device_data_lock, device_consecutive_failures
         
         now = datetime.now()
         total_out_of_range = 0
-        stale_detected = False
+        communication_failure_detected = False
 
         try:
             with device_data_lock:
@@ -878,12 +907,13 @@ class AppIndustrial:
                             total_out_of_range += (0 if v_ok else 1)
                             total_out_of_range += sum(0 if lamp_ok else 1 for lamp_ok in lamp_status)
 
-                        # Check if data is stale (>120 seconds old - allows for full query cycle)
-                        timestamp = data.get('timestamp')
-                        if not timestamp or (now - timestamp).total_seconds() > 120:
-                            # In test mode, only Device 1 can trigger stale detection
+                        # Check consecutive failures instead of timestamp
+                        # Only trigger alarm after MAX_CONSECUTIVE_FAILURES (prevents false alarms during LoRa recovery)
+                        consecutive_failures = device_consecutive_failures.get(device_id, 0)
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                            # In test mode, only Device 1 can trigger communication failure alarm
                             if not self.test_mode or device_id == 1:
-                                stale_detected = True
+                                communication_failure_detected = True
                         
                         # Update visual indicators
                         color_v = "#2ecc71" if v_ok else "#e74c3c"
@@ -896,36 +926,40 @@ class AppIndustrial:
                         self.lbls_v_val[idx].config(text=f"{voltage:.1f} V", fg="white" if v_ok else "#ff4444")
 
                     else:
-                        # No data available for this device
+                        # No data available for this device - check consecutive failures
+                        consecutive_failures = device_consecutive_failures.get(device_id, 0)
+                        
                         if self.test_mode:
                             # In test mode, treat missing devices as OK (except Device 1)
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#2ecc71")
                             for lamp_i in range(4):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#2ecc71")
                             self.lbls_v_val[idx].config(text="OK", fg="white")
-                            # Only mark as stale if it's Device 1 (critical for test mode)
-                            if device_id == 1:
-                                stale_detected = True
+                            # Only trigger alarm if Device 1 has exceeded failure threshold
+                            if device_id == 1 and consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                                communication_failure_detected = True
                         else:
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
                             for lamp_i in range(4):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
                             self.lbls_v_val[idx].config(text="--- V", fg="#ff4444")
-                            stale_detected = True
+                            # Only trigger alarm if exceeded failure threshold
+                            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                                communication_failure_detected = True
         
         except Exception as e:
             print(f"HMI update error: {e}")
 
         # Update tower status based on system health (only if state changed)
-        current_state = (total_out_of_range, stale_detected)
+        current_state = (total_out_of_range, communication_failure_detected)
         if current_state != self.last_tower_state:
-            self.actualizar_torreta(total_out_of_range, stale_detected)
+            self.actualizar_torreta(total_out_of_range, communication_failure_detected)
             self.last_tower_state = current_state
         
         # Update buzzer independently (called every 1 second)
         self.actualizar_buzzer()
 
-        if total_out_of_range > 0 or stale_detected:
+        if total_out_of_range > 0 or communication_failure_detected:
             self.activar_alerta("FALLA SISTEMA")
         else:
             self.limpiar_alerta()

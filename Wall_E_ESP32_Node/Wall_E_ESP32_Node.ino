@@ -345,6 +345,40 @@ float CURRENT_THRESHOLD_MAX = 1.2;   // Maximum acceptable current (Amperes)
 float AC_VOLTAGE_THRESHOLD = 100.0;  // Minimum acceptable voltage (Volts RMS)
 
 // ============================================================================
+// LORA WATCHDOG CONFIGURATION
+// ============================================================================
+/*
+ * The SX1278 LoRa module can occasionally enter an unresponsive state where
+ * it stops receiving packets. This watchdog system monitors LoRa activity and
+ * automatically resets the module if it becomes unresponsive.
+ * 
+ * WATCHDOG STRATEGY:
+ * 1. Track timestamp of last LoRa activity (packet received OR parsePacket() call)
+ * 2. Periodically check if too much time has passed without activity
+ * 3. If timeout exceeded, perform hardware reset and reinitialize LoRa module
+ * 4. LED turns RED during reset, returns to normal operation after recovery
+ * 
+ * TIMEOUT CONFIGURATION:
+ * - LORA_WATCHDOG_TIMEOUT_MS: Time without activity before triggering reset
+ *   * Default: 20000ms (20 seconds)
+ *   * Adjust based on coordinator polling frequency
+ *   * Should be ~3-5x the expected max time between requests
+ *   * IMPORTANT: Must be LESS than Raspberry Pi's stale timeout (120s)
+ *     to allow automatic recovery before coordinator raises alarm
+ * 
+ * ACTIVITY DETECTION:
+ * - Updated in checkLoRaPackets() on every call (even if no packet)
+ * - This ensures we detect both "no packets" and "module frozen" conditions
+ * - A frozen module won't respond to parsePacket(), causing timeout
+ */
+
+#define LORA_WATCHDOG_TIMEOUT_MS 20000  // 20 seconds without activity = frozen
+#define LORA_RESET_RETRY_MAX 3          // Max reset attempts before halting
+
+unsigned long lastLoRaActivity = 0;     // Timestamp of last LoRa activity (millis)
+uint8_t loraResetCount = 0;             // Counter for LoRa reset events (diagnostic)
+
+// ============================================================================
 // GLOBAL VARIABLES
 // ============================================================================
 
@@ -423,6 +457,89 @@ void setup() {
   neopixel.setPixelColor(0, COLOR_BLUE);
   neopixel.show();
   digitalWrite(LED_PIN, HIGH);
+  
+  // Initialize LoRa watchdog timer
+  lastLoRaActivity = millis();
+}
+
+// ============================================================================
+// LORA MODULE RESET FUNCTION
+// ============================================================================
+/*
+ * Performs a complete hardware reset and re-initialization of the LoRa module.
+ * Called automatically by watchdog when module becomes unresponsive.
+ * 
+ * RESET PROCEDURE:
+ * 1. Visual indication (RED LED)
+ * 2. Hardware reset via RESET pin (LOW → delay → HIGH)
+ * 3. Re-initialize SPI bus
+ * 4. Re-configure LoRa module with all parameters
+ * 5. Return to RX mode
+ * 6. Update activity timestamp
+ * 
+ * RETURNS: true if reset successful, false if initialization failed
+ */
+bool resetLoRaModule() {
+  loraResetCount++;
+  
+  Serial.println("\n⚠️  \033[1;31mLoRa WATCHDOG TRIGGERED\033[0m");
+  Serial.printf("No activity detected for %d seconds\n", LORA_WATCHDOG_TIMEOUT_MS / 1000);
+  Serial.printf("Attempting LoRa module reset (attempt #%d)...\n", loraResetCount);
+  
+  // Visual indication: RED = resetting
+  neopixel.setPixelColor(0, COLOR_RED);
+  neopixel.show();
+  
+  // Step 1: Hardware reset via RESET pin
+  Serial.println("  [1/5] Performing hardware reset...");
+  pinMode(LORA_RST, OUTPUT);
+  digitalWrite(LORA_RST, LOW);
+  delay(100);
+  digitalWrite(LORA_RST, HIGH);
+  delay(100);
+  
+  // Step 2: Re-initialize SPI bus
+  Serial.println("  [2/5] Re-initializing SPI bus...");
+  SPI.end();
+  delay(50);
+  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
+  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
+  
+  // Step 3: Initialize LoRa module
+  Serial.println("  [3/5] Initializing LoRa module...");
+  if (!LoRa.begin(433E6)) {
+    Serial.println("  \033[1;31m✗ FAILED: LoRa.begin() returned false\033[0m");
+    Serial.println("  Possible causes:");
+    Serial.println("    - Module hardware failure");
+    Serial.println("    - Loose connection");
+    Serial.println("    - SPI bus issue");
+    return false;
+  }
+  
+  // Step 4: Re-configure LoRa parameters
+  Serial.println("  [4/5] Configuring LoRa parameters...");
+  LoRa.setSpreadingFactor(7);
+  LoRa.setSignalBandwidth(125E3);
+  LoRa.setCodingRate4(5);
+  LoRa.setSyncWord(0x21);
+  LoRa.enableCrc();
+  
+  // Step 5: Enter RX mode
+  Serial.println("  [5/5] Entering receive mode...");
+  LoRa.receive();
+  
+  // Reset successful
+  Serial.println("\033[1;32m✓ LoRa module reset SUCCESSFUL\033[0m");
+  Serial.printf("Total resets since boot: %d\n\n", loraResetCount);
+  
+  // Update activity timestamp
+  lastLoRaActivity = millis();
+  
+  // Return to standby color
+  neopixel.setPixelColor(0, COLOR_BLUE);
+  neopixel.show();
+  
+  return true;
 }
 
 // ============================================================================
@@ -705,6 +822,9 @@ uint8_t scale_current(float current_mA) {
  * This reduces max packet loss window from 150ms to ~30ms per window!
  */
 void checkLoRaPackets() {
+  // Update watchdog timer (activity = checking for packets, even if none arrive)
+  lastLoRaActivity = millis();
+  
   int packetSize = LoRa.parsePacket();
   
   if (packetSize > 0) {
@@ -816,6 +936,7 @@ void checkLoRaPackets() {
 // ============================================================================
 /*
  * OPERATION FLOW:
+ * 0. LoRa Watchdog: Check for module freeze and auto-reset if needed
  * 1. Check for LoRa packets (before sensor readings)
  * 2. Read sensor 1 → Check LoRa (30ms window)
  * 3. Read sensor 2 → Check LoRa (30ms window)
@@ -825,9 +946,16 @@ void checkLoRaPackets() {
  * 7. Process/filter data
  * 8. Small delay, then repeat
  *
- * CRITICAL OPTIMIZATION: Multiple LoRa checks per loop!
- *   - OLD: Sensors readings (~150ms) THEN check LoRa → High packet loss!
- *   - NEW: Check LoRa BETWEEN each sensor → Max 30ms window → Low packet loss!
+ * CRITICAL OPTIMIZATIONS:
+ *   1. Multiple LoRa checks per loop
+ *      - OLD: Sensors readings (~150ms) THEN check LoRa → High packet loss!
+ *      - NEW: Check LoRa BETWEEN each sensor → Max 30ms window → Low packet loss!
+ *   
+ *   2. LoRa Watchdog (Auto-Recovery)
+ *      - Monitors LoRa activity every loop cycle
+ *      - If no activity for 60s → Automatic hardware reset + re-init
+ *      - Prevents permanent freeze conditions
+ *      - LED turns RED during reset, returns to BLUE after recovery
  *
  * NOTE: USE_ONLY_SENSOR1 Configuration
  *   - When USE_ONLY_SENSOR1 = true: Only CURRENT_SENSOR1 is active
@@ -839,6 +967,52 @@ void checkLoRaPackets() {
  */
 
 void loop() {
+  // ========================================================================
+  // LORA WATCHDOG CHECK
+  // ========================================================================
+  // Check if LoRa module has been inactive for too long (indicates freeze)
+  unsigned long timeSinceLastActivity = millis() - lastLoRaActivity;
+  
+  if (timeSinceLastActivity > LORA_WATCHDOG_TIMEOUT_MS) {
+    // LoRa module appears frozen - attempt reset
+    bool resetSuccess = resetLoRaModule();
+    
+    if (!resetSuccess) {
+      // Reset failed - check if we should halt
+      if (loraResetCount >= LORA_RESET_RETRY_MAX) {
+        Serial.println("\n\033[1;31m╔═══════════════════════════════════════════════╗\033[0m");
+        Serial.println("\033[1;31m║   CRITICAL ERROR: LoRa Module Unrecoverable   ║\033[0m");
+        Serial.println("\033[1;31m╚═══════════════════════════════════════════════╝\033[0m");
+        Serial.printf("Failed to reset LoRa module after %d attempts.\n", LORA_RESET_RETRY_MAX);
+        Serial.println("\nPossible causes:");
+        Serial.println("  1. LoRa module hardware failure");
+        Serial.println("  2. Loose or broken connection (check wiring)");
+        Serial.println("  3. SPI bus conflict with other devices");
+        Serial.println("  4. Insufficient power supply to LoRa module");
+        Serial.println("\nACTION REQUIRED:");
+        Serial.println("  - Check physical connections");
+        Serial.println("  - Verify 3.3V power supply to LoRa module");
+        Serial.println("  - Power cycle the ESP32 (reset button)");
+        Serial.println("  - Replace LoRa module if problem persists\n");
+        
+        // Halt with blinking RED LED
+        while (true) {
+          neopixel.setPixelColor(0, COLOR_RED);
+          neopixel.show();
+          digitalWrite(LED_PIN, HIGH);
+          delay(500);
+          neopixel.setPixelColor(0, COLOR_OFF);
+          neopixel.show();
+          digitalWrite(LED_PIN, LOW);
+          delay(500);
+        }
+      }
+      // Reset failed but retry attempts remain - continue and retry on next timeout
+      delay(1000);
+      return;
+    }
+    // Reset successful - continue normal operation
+  }
 
   // Pulso azul en standby para indicar que el loop está activo
   static unsigned long lastPulse = 0;
