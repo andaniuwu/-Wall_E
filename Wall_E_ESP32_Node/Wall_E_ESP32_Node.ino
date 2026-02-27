@@ -138,6 +138,14 @@ ADJUSTMENTS PER INSTALLATION:
 #define LORA_RST        14    // GPIO14 (Pin 13)
 #define LORA_DIO0       46    // GPIO46 (Pin 44)
 
+// ---- LoRa RF profile (robust mode for noisy industrial environments) ----
+#define LORA_FREQUENCY_HZ    433E6
+#define LORA_SPREADING_FACTOR 10      // Higher sensitivity than SF7, still practical latency
+#define LORA_BANDWIDTH_HZ    125E3
+#define LORA_CODING_RATE     8        // CR 4/8 = strongest forward error correction
+#define LORA_PREAMBLE_LEN    12       // Longer preamble improves packet detection
+#define LORA_TX_POWER_DBM    17       // Safe high power for SX1278 modules
+
 // ---- Indicator LED ----
 #define LED_PIN         2     // Onboard LED (GPIO2) - indicates system running
 
@@ -430,7 +438,7 @@ void setup() {
 
   // Initialize LoRa module with 433 MHz frequency
   // Using standard LoRa parameters for balanced range/speed
-  if (!LoRa.begin(433E6)) {
+  if (!LoRa.begin(LORA_FREQUENCY_HZ)) {
     Serial.println("ERROR: LoRa initialization failed!");
     Serial.println("Possible causes:");
     Serial.println("  - Module not physically connected");
@@ -441,9 +449,11 @@ void setup() {
   }
 
   // Configure LoRa physical layer parameters
-  LoRa.setSpreadingFactor(7);           // SF=7: Medium range, better speed
-  LoRa.setSignalBandwidth(125E3);       // Bandwidth: 125 kHz (standard)
-  LoRa.setCodingRate4(5);               // Coding rate: 4/5 (standard)
+  LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
+  LoRa.setSignalBandwidth(LORA_BANDWIDTH_HZ);
+  LoRa.setCodingRate4(LORA_CODING_RATE);
+  LoRa.setPreambleLength(LORA_PREAMBLE_LEN);
+  LoRa.setTxPower(LORA_TX_POWER_DBM);
   LoRa.setSyncWord(0x21);               // Sync word: 0x21 (private network)
   LoRa.enableCrc();                     // Enable CRC error checking
   LoRa.receive();                        // Ensure radio stays in RX mode
@@ -451,9 +461,11 @@ void setup() {
   // Print initialization complete message
   Serial.println("✓ LoRa initialized successfully!");
   Serial.println("  Frequency: 433 MHz");
-  Serial.println("  Spreading Factor: 7");
+  Serial.println("  Spreading Factor: 10");
   Serial.println("  Bandwidth: 125 kHz");
-  Serial.println("  Coding Rate: 4/5");
+  Serial.println("  Coding Rate: 4/8");
+  Serial.println("  Preamble Length: 12");
+  Serial.println("  TX Power: 17 dBm");
   Serial.println("  Waiting for requests from coordinator...");
   Serial.println("========================================\n");
 
@@ -511,7 +523,7 @@ bool resetLoRaModule() {
   
   // Step 3: Initialize LoRa module
   Serial.println("  [3/5] Initializing LoRa module...");
-  if (!LoRa.begin(433E6)) {
+  if (!LoRa.begin(LORA_FREQUENCY_HZ)) {
     Serial.println("  \033[1;31m✗ FAILED: LoRa.begin() returned false\033[0m");
     Serial.println("  Possible causes:");
     Serial.println("    - Module hardware failure");
@@ -522,9 +534,11 @@ bool resetLoRaModule() {
   
   // Step 4: Re-configure LoRa parameters
   Serial.println("  [4/5] Configuring LoRa parameters...");
-  LoRa.setSpreadingFactor(7);
-  LoRa.setSignalBandwidth(125E3);
-  LoRa.setCodingRate4(5);
+  LoRa.setSpreadingFactor(LORA_SPREADING_FACTOR);
+  LoRa.setSignalBandwidth(LORA_BANDWIDTH_HZ);
+  LoRa.setCodingRate4(LORA_CODING_RATE);
+  LoRa.setPreambleLength(LORA_PREAMBLE_LEN);
+  LoRa.setTxPower(LORA_TX_POWER_DBM);
   LoRa.setSyncWord(0x21);
   LoRa.enableCrc();
   
