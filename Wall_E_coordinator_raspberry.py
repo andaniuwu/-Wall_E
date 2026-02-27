@@ -948,8 +948,16 @@ class AppIndustrial:
                             self.classify_current_status(curr3),
                         ]
                         
-                        # Count indicators for tower logic (CH1 and CH3 only)
+                        # Count indicators for tower logic (CH1 and CH3 + Voltage)
                         if not self.test_mode or device_id == 1:
+                            # Add voltage status to indicators
+                            # If voltage is very low (0-10V), it's a critical failure (RED)
+                            # If voltage is out of range but not critical, it's a warning (YELLOW)
+                            if voltage < 10:
+                                total_red_indicators += 1
+                            elif not v_ok:
+                                total_yellow_indicators += 1
+                            
                             for status, _, _ in current_status:
                                 if status == "RED":
                                     total_red_indicators += 1
