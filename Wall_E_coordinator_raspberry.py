@@ -754,6 +754,12 @@ class AppIndustrial:
         tk.Button(self.f_btn, text="MAPA", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
         tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
         tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
+        
+        # Admin buttons
+        admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
+        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=2, column=0, columnspan=2, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="REINICIAR SISTEMA", command=self.reiniciar_sistema, **admin_style).grid(row=2, column=2, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="APAGAR", command=self.apagar_sistema, **admin_style).grid(row=2, column=3, sticky="we", padx=2, pady=2)
         self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
 
         # Carga imagen para el Mapa
@@ -805,6 +811,26 @@ class AppIndustrial:
     def test_mode_off(self):
         self.test_mode = False
         self.registrar_log("TEST MODE OFF")
+
+    def reiniciar_programa(self):
+        """Reiniciar el programa (exit y dejar que se reabre automáticamente)"""
+        if messagebox.askyesno("Reiniciar", "¿Reiniciar el programa?"):
+            self.registrar_log("REINICIANDO PROGRAMA...")
+            global coordinator_running
+            coordinator_running = False
+            self.root.after(500, lambda: self.root.quit())
+
+    def reiniciar_sistema(self):
+        """Reiniciar la Raspberry Pi"""
+        if messagebox.askyesno("ATENCIÓN", "¿Reiniciar el sistema? (esto apagará y encenderá la Pi)"):
+            self.registrar_log("REINICIANDO SISTEMA...")
+            os.system("sudo reboot")
+
+    def apagar_sistema(self):
+        """Apagar la Raspberry Pi"""
+        if messagebox.askyesno("ATENCIÓN", "¿Apagar el sistema? (esto apagará la Pi)"):
+            self.registrar_log("APAGANDO SISTEMA...")
+            os.system("sudo poweroff")
 
     def classify_current_status(self, current_mA):
         """Return (status_code, color, description) for active current indicators."""
