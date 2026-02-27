@@ -274,6 +274,10 @@ const float ACS712_BASELINE_CORRECTION_A = 0.040f;  // Software correction: subt
 // Enable/disable multi-sensor reading: true = CURR1 only, false = all 4 sensors
 #define USE_ONLY_SENSOR1 false
 
+// Production wiring mode: only sensors 1 and 3 are active.
+// Sensors 2 and 4 are physically mounted but intentionally unused.
+#define USE_SENSORS_1_AND_3_ONLY true
+
 // CURRENT MEASUREMENT MODE: Choose between AC and DC measurement
 // Set to true for AC measurement (RMS), false for DC measurement (average)
 #define CURRENT_MEASUREMENT_AC true
@@ -1068,6 +1072,11 @@ void loop() {
     current_sensor2_A = 0.0;
     current_sensor3_A = 0.0;
     current_sensor4_A = 0.0;
+  } else if (USE_SENSORS_1_AND_3_ONLY) {
+    current_sensor2_A = 0.0;
+    current_sensor3_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR3) : readDC_and_convertToCurrent(CURRENT_SENSOR3);
+    checkLoRaPackets();
+    current_sensor4_A = 0.0;
   } else {
     current_sensor2_A = (CURRENT_MEASUREMENT_AC) ? readRMS_and_convertToCurrent(CURRENT_SENSOR2) : readDC_and_convertToCurrent(CURRENT_SENSOR2);
     checkLoRaPackets();
@@ -1087,26 +1096,37 @@ void loop() {
     if (now - lastSimUpdate >= 5000) {
       // Generate new random values (all 4 sensors for completeness)
       sim_current1_A = random(0, 1201) / 1000.0f;      // 0-1200 mA → 0-1.200 A
-      if (!USE_ONLY_SENSOR1) {
+      if (!USE_ONLY_SENSOR1 && !USE_SENSORS_1_AND_3_ONLY) {
         sim_current2_A = random(0, 1201) / 1000.0f;
         sim_current3_A = random(0, 1201) / 1000.0f;
         sim_current4_A = random(0, 1201) / 1000.0f;
+      } else if (USE_SENSORS_1_AND_3_ONLY) {
+        sim_current2_A = 0.0f;
+        sim_current3_A = random(0, 1201) / 1000.0f;
+        sim_current4_A = 0.0f;
       }
       sim_voltage_V = 100.0f + (random(0, 501) / 10.0f);  // 100-150 V RMS
       lastSimUpdate = now;
-      if (!USE_ONLY_SENSOR1) {
+      if (!USE_ONLY_SENSOR1 && !USE_SENSORS_1_AND_3_ONLY) {
         Serial.printf("[SIM] New random values: I1=%.0fmA I2=%.0fmA I3=%.0fmA I4=%.0fmA V=%.1fV\n",
           sim_current1_A * 1000, sim_current2_A * 1000, sim_current3_A * 1000, sim_current4_A * 1000, sim_voltage_V);
+      } else if (USE_SENSORS_1_AND_3_ONLY) {
+        Serial.printf("[SIM] New random values (1&3 active): I1=%.0fmA I3=%.0fmA V=%.1fV\n",
+          sim_current1_A * 1000, sim_current3_A * 1000, sim_voltage_V);
       } else {
         Serial.printf("[SIM] New random value: I1=%.0fmA V=%.1fV\n",
           sim_current1_A * 1000, sim_voltage_V);
       }
     }
     current_sensor1_A = sim_current1_A;
-    if (!USE_ONLY_SENSOR1) {
+    if (!USE_ONLY_SENSOR1 && !USE_SENSORS_1_AND_3_ONLY) {
       current_sensor2_A = sim_current2_A;
       current_sensor3_A = sim_current3_A;
       current_sensor4_A = sim_current4_A;
+    } else if (USE_SENSORS_1_AND_3_ONLY) {
+      current_sensor2_A = 0.0f;
+      current_sensor3_A = sim_current3_A;
+      current_sensor4_A = 0.0f;
     }
     AC_voltage_V = sim_voltage_V;
     // Simulated debug values (consistent with 1.55V offset and typical AC readings)
@@ -1118,10 +1138,14 @@ void loop() {
   
   // Apply moving average filter to smooth readings
   current_sensor1_A = applyMovingAverage(current_sensor1_A, filter_curr1, filter_index1);
-  if (!USE_ONLY_SENSOR1) {
+  if (!USE_ONLY_SENSOR1 && !USE_SENSORS_1_AND_3_ONLY) {
     current_sensor2_A = applyMovingAverage(current_sensor2_A, filter_curr2, filter_index2);
     current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
     current_sensor4_A = applyMovingAverage(current_sensor4_A, filter_curr4, filter_index4);
+  } else if (USE_SENSORS_1_AND_3_ONLY) {
+    current_sensor3_A = applyMovingAverage(current_sensor3_A, filter_curr3, filter_index3);
+    current_sensor2_A = 0.0;
+    current_sensor4_A = 0.0;
   }
   
   // Apply noise floor: clamp weak readings to 0A

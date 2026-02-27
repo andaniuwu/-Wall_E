@@ -128,6 +128,8 @@ VOLTAGE_MIN = 100.0                # Minimum acceptable voltage (V)
 VOLTAGE_MAX = 135.0                # Maximum acceptable voltage (V)
 CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
+CURRENT_YELLOW_THRESHOLD = 125.0   # <125mA = yellow warning
+CURRENT_RED_THRESHOLD = 50.0       # <50mA = red fault
 
 # ALARM TOLERANCE CONFIGURATION
 MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before triggering alarm
@@ -686,7 +688,7 @@ class AppIndustrial:
         self.container.pack(expand=True, fill="both", padx=5)
 
         self.leds_v, self.lbls_v_val, self.frames_robot = [], [], []
-        self.uv_lamps = []  # per-node list of 4 lamp indicators
+        self.uv_lamps = []  # per-node list of 2 active current indicators (CH1, CH3)
 
         for i in range(NUM_DEVICES):
             # Creamos una "tarjeta" para cada robot
@@ -706,11 +708,11 @@ class AppIndustrial:
             lv.pack()
             self.lbls_v_val.append(lv)
 
-            # Indicadores por lámpara UV (4 focos pequeños)
+            # Indicadores de corriente activos (2 focos: CH1 y CH3)
             lamps_frame = tk.Frame(f, bg="#3a2a7a")
             lamps_frame.pack(pady=2)
             lamp_widgets = []
-            for lamp_idx in range(4):
+            for lamp_idx in range(2):
                 lamp_canvas = tk.Canvas(lamps_frame, width=16, height=16, bg="#3a2a7a", highlightthickness=0)
                 lamp_canvas.grid(row=0, column=lamp_idx, padx=2)
                 lamp_circle = lamp_canvas.create_oval(3, 3, 13, 13, fill="#555555", outline="white")
@@ -792,17 +794,28 @@ class AppIndustrial:
         self.test_mode = False
         self.registrar_log("TEST MODE OFF")
 
-    def actualizar_torreta(self, total_out_of_range, communication_failure):
+    def classify_current_status(self, current_mA):
+        """Return status and color for active current indicators (CH1 and CH3)."""
+        if current_mA < CURRENT_RED_THRESHOLD:
+            return "RED", "#e74c3c"
+        if current_mA < CURRENT_YELLOW_THRESHOLD:
+            return "YELLOW", "#f1c40f"
+        if current_mA <= CURRENT_MAX:
+            return "GREEN", "#2ecc71"
+        return "RED", "#e74c3c"
+
+    def actualizar_torreta(self, total_yellow, total_red, communication_failure):
         """
         Update physical tower light and buzzer based on system health
         
         Args:
-            total_out_of_range: Number of sensors outside acceptable thresholds
+            total_yellow: Number of yellow current indicators across all nodes
+            total_red: Number of red current indicators across all nodes
             communication_failure: True if any device has >= MAX_CONSECUTIVE_FAILURES
         """
         try:
-            red_active = communication_failure or total_out_of_range >= 2
-            yellow_active = (not red_active) and total_out_of_range == 1
+            red_active = communication_failure or total_red >= 2
+            yellow_active = (not red_active) and (total_red == 1 or total_yellow >= 1)
             green_active = (not red_active) and (not yellow_active)
 
             # Only update relays if state changed to reduce GPIO interference with SPI
@@ -873,8 +886,8 @@ class AppIndustrial:
         """Update HMI display with latest device data from coordinator"""
         global shared_device_data, device_data_lock, device_consecutive_failures
         
-        now = datetime.now()
-        total_out_of_range = 0
+        total_yellow_indicators = 0
+        total_red_indicators = 0
         communication_failure_detected = False
 
         try:
@@ -888,24 +901,22 @@ class AppIndustrial:
                         # Extract sensor values
                         voltage = data.get('ac_voltage_V', 0)
                         curr1 = data.get('curr1_mA', 0)
-                        curr2 = data.get('curr2_mA', 0)
                         curr3 = data.get('curr3_mA', 0)
-                        curr4 = data.get('curr4_mA', 0)
                         
-                        # Check thresholds
+                        # Voltage indicator keeps original logic
                         v_ok = VOLTAGE_MIN <= voltage <= VOLTAGE_MAX
-                        lamp_status = [
-                            CURRENT_MIN <= curr1 <= CURRENT_MAX,
-                            CURRENT_MIN <= curr2 <= CURRENT_MAX,
-                            CURRENT_MIN <= curr3 <= CURRENT_MAX,
-                            CURRENT_MIN <= curr4 <= CURRENT_MAX,
+                        current_status = [
+                            self.classify_current_status(curr1),
+                            self.classify_current_status(curr3),
                         ]
-                        uv_ok = all(lamp_status)
                         
-                        # In test mode, only count Device 1 faults
+                        # Count indicators for tower logic (CH1 and CH3 only)
                         if not self.test_mode or device_id == 1:
-                            total_out_of_range += (0 if v_ok else 1)
-                            total_out_of_range += sum(0 if lamp_ok else 1 for lamp_ok in lamp_status)
+                            for status, _ in current_status:
+                                if status == "RED":
+                                    total_red_indicators += 1
+                                elif status == "YELLOW":
+                                    total_yellow_indicators += 1
 
                         # Check consecutive failures instead of timestamp
                         # Only trigger alarm after MAX_CONSECUTIVE_FAILURES (prevents false alarms during LoRa recovery)
@@ -919,9 +930,8 @@ class AppIndustrial:
                         color_v = "#2ecc71" if v_ok else "#e74c3c"
                         
                         self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill=color_v)
-                        # Update per-lamp indicators
-                        for lamp_i, lamp_ok in enumerate(lamp_status):
-                            lamp_color = "#2ecc71" if lamp_ok else "#e74c3c"
+                        # Update active current indicators (CH1 and CH3)
+                        for lamp_i, (_, lamp_color) in enumerate(current_status):
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
                         self.lbls_v_val[idx].config(text=f"{voltage:.1f} V", fg="white" if v_ok else "#ff4444")
 
@@ -932,7 +942,7 @@ class AppIndustrial:
                         if self.test_mode:
                             # In test mode, treat missing devices as OK (except Device 1)
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#2ecc71")
-                            for lamp_i in range(4):
+                            for lamp_i in range(2):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#2ecc71")
                             self.lbls_v_val[idx].config(text="OK", fg="white")
                             # Only trigger alarm if Device 1 has exceeded failure threshold
@@ -940,7 +950,7 @@ class AppIndustrial:
                                 communication_failure_detected = True
                         else:
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
-                            for lamp_i in range(4):
+                            for lamp_i in range(2):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
                             self.lbls_v_val[idx].config(text="--- V", fg="#ff4444")
                             # Only trigger alarm if exceeded failure threshold
@@ -951,15 +961,15 @@ class AppIndustrial:
             print(f"HMI update error: {e}")
 
         # Update tower status based on system health (only if state changed)
-        current_state = (total_out_of_range, communication_failure_detected)
+        current_state = (total_yellow_indicators, total_red_indicators, communication_failure_detected)
         if current_state != self.last_tower_state:
-            self.actualizar_torreta(total_out_of_range, communication_failure_detected)
+            self.actualizar_torreta(total_yellow_indicators, total_red_indicators, communication_failure_detected)
             self.last_tower_state = current_state
         
         # Update buzzer independently (called every 1 second)
         self.actualizar_buzzer()
 
-        if total_out_of_range > 0 or communication_failure_detected:
+        if total_red_indicators >= 2 or communication_failure_detected:
             self.activar_alerta("FALLA SISTEMA")
         else:
             self.limpiar_alerta()
@@ -997,11 +1007,11 @@ class AppIndustrial:
     def mostrar_detalle_lamparas(self, device_id):
         """Open a window showing per-lamp UV status for a device"""
         top = tk.Toplevel(self.root)
-        top.title(f"Detalle Lámparas UV - W-{device_id}")
+        top.title(f"Detalle Corriente Activa - W-{device_id}")
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
 
-        tk.Label(top, text=f"W-{device_id} - Estado de Lámparas UV",
+        tk.Label(top, text=f"W-{device_id} - Estado Corriente (CH1 y CH3)",
                  font=("Arial", 12, "bold"), bg="#1a1a1a", fg="#00ff00").pack(pady=10)
 
         frame = tk.Frame(top, bg="#1a1a1a")
@@ -1014,16 +1024,12 @@ class AppIndustrial:
             tk.Label(frame, text="Sin datos del nodo.", bg="#1a1a1a", fg="white").pack(pady=10)
         else:
             currents = [
-                data.get('curr1_mA', 0),
-                data.get('curr2_mA', 0),
-                data.get('curr3_mA', 0),
-                data.get('curr4_mA', 0),
+                ("CH1", data.get('curr1_mA', 0)),
+                ("CH3", data.get('curr3_mA', 0)),
             ]
 
-            for idx, curr in enumerate(currents, start=1):
-                ok = CURRENT_MIN <= curr <= CURRENT_MAX
-                color = "#2ecc71" if ok else "#e74c3c"
-                status = "OK" if ok else "FALLA"
+            for channel_name, curr in currents:
+                status, color = self.classify_current_status(curr)
 
                 row = tk.Frame(frame, bg="#1a1a1a")
                 row.pack(fill="x", pady=4)
@@ -1032,7 +1038,7 @@ class AppIndustrial:
                 lamp_canvas.pack(side="left", padx=8)
                 lamp_canvas.create_oval(3, 3, 17, 17, fill=color, outline="white")
 
-                tk.Label(row, text=f"Lámpara {idx}: {curr:.0f} mA",
+                tk.Label(row, text=f"{channel_name}: {curr:.0f} mA",
                          font=("Arial", 10), bg="#1a1a1a", fg="white").pack(side="left")
                 tk.Label(row, text=status, font=("Arial", 10, "bold"), bg="#1a1a1a", fg=color).pack(side="right")
 
