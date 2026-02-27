@@ -269,6 +269,12 @@ const float ACS712_BASELINE_CORRECTION_A = 0.040f;  // Software correction: subt
 //   - Ratio: 119.8V / 0.102V = 1175 V/V
 #define VOLTAGE_RATIO 1175
 
+// VOLTAGE_CAL_FACTOR: Final calibration multiplier (configurable)
+//   - Keep at 1.000f to preserve current real-site calibration (~122Vrms)
+//   - Optional normalization to nominal 127Vrms: 127.0 / 122.0 = 1.041f
+//   - Effective voltage = computed_voltage * VOLTAGE_CAL_FACTOR
+#define VOLTAGE_CAL_FACTOR 1.000f
+
 // ZMPT_OFFSET_mV: Systematic offset correction for ADC readings
 //   Root Cause: The ESP32 ADC and signal conditioning have a ~7mV systematic bias
 //   when measuring the ZMPT101B AC output. This was discovered through calibration:
@@ -325,6 +331,16 @@ float debug_rms_curr1 = 0;
 float debug_min_mV = 0;
 float debug_max_mV = 0;
 float AC_voltage_V = 0.0;     // AC voltage in Volts RMS
+float AC_voltage_tx_V = 0.0;  // Voltage sent to coordinator (3-second moving mean)
+
+// Telemetry scaling max for voltage packet encoding (must match coordinator decode)
+const float VOLTAGE_SCALE_MAX_V = 130.0f;
+
+// 3-second voltage averaging window for transmitted value
+#define VOLTAGE_TX_AVG_WINDOW_MS 3000UL
+unsigned long voltageAvgWindowStartMs = 0;
+float voltageAvgAccumV = 0.0;
+uint16_t voltageAvgSampleCount = 0;
 
 
 // ============================================================================
@@ -789,6 +805,9 @@ float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
   // VOLTAGE_RATIO = 1175 V/V means: 1mV at ADC input × 1175 = 1.175V at mains output
   float voltage_V = (rms_voltage_corrected_mV / 1000.0f) * VOLTAGE_RATIO;
 
+  // Optional final site calibration factor (default keeps current 122Vrms behavior)
+  voltage_V *= VOLTAGE_CAL_FACTOR;
+
   return voltage_V;
 }
 
@@ -810,8 +829,8 @@ float readRMS_and_convertToVoltage(uint8_t pin, uint16_t samples = ADC_SAMPLES) 
 uint8_t scale_voltage(float voltage_V) {
   // Map 0-130V RMS to 0-255 (resolution: 0.51 V/step)
   if (voltage_V < 0) return 0;
-  if (voltage_V > 130.0) return 255;
-  return (uint8_t)((voltage_V / 130.0) * 255.0);
+  if (voltage_V > VOLTAGE_SCALE_MAX_V) return 255;
+  return (uint8_t)((voltage_V / VOLTAGE_SCALE_MAX_V) * 255.0);
 }
 
 uint8_t scale_current(float current_mA) {
@@ -819,6 +838,27 @@ uint8_t scale_current(float current_mA) {
   if (current_mA < 0) return 0;
   if (current_mA > 2550.0) return 255;
   return (uint8_t)((current_mA / 2550.0) * 255.0);
+}
+
+void updateVoltageTxAverage(float voltageSample_V) {
+  unsigned long nowMs = millis();
+
+  if (voltageAvgWindowStartMs == 0) {
+    voltageAvgWindowStartMs = nowMs;
+    AC_voltage_tx_V = voltageSample_V;
+  }
+
+  voltageAvgAccumV += voltageSample_V;
+  voltageAvgSampleCount++;
+
+  if (nowMs - voltageAvgWindowStartMs >= VOLTAGE_TX_AVG_WINDOW_MS) {
+    if (voltageAvgSampleCount > 0) {
+      AC_voltage_tx_V = voltageAvgAccumV / voltageAvgSampleCount;
+    }
+    voltageAvgAccumV = 0.0;
+    voltageAvgSampleCount = 0;
+    voltageAvgWindowStartMs = nowMs;
+  }
 }
 
 // ============================================================================
@@ -883,7 +923,7 @@ void checkLoRaPackets() {
                       LoRa.packetRssi(), net, type, tgtId, req);
         
         // Scale measurements to 8-bit format for transmission
-        uint8_t ac_v_scaled = scale_voltage(AC_voltage_V);
+        uint8_t ac_v_scaled = scale_voltage(AC_voltage_tx_V);
         uint8_t curr1_scaled = scale_current(current_sensor1_A * 1000.0);  // Convert A to mA
         uint8_t curr2_scaled = scale_current(current_sensor2_A * 1000.0);
         uint8_t curr3_scaled = scale_current(current_sensor3_A * 1000.0);
@@ -916,8 +956,8 @@ void checkLoRaPackets() {
 
         // Debug output
         Serial.printf("[Device %d] Response sent (Seq=%d): ", TX_ID, seq-1);
-        Serial.printf("AC=%.1fV(%d) CURR1=%.2fA(%d) CURR2=%.2fA(%d) CURR3=%.2fA(%d) CURR4=%.2fA(%d)\n",
-          AC_voltage_V, ac_v_scaled,
+        Serial.printf("AC(avg3s)=%.1fV(%d) AC(inst)=%.1fV CURR1=%.2fA(%d) CURR2=%.2fA(%d) CURR3=%.2fA(%d) CURR4=%.2fA(%d)\n",
+          AC_voltage_tx_V, ac_v_scaled, AC_voltage_V,
           current_sensor1_A, curr1_scaled,
           current_sensor2_A, curr2_scaled,
           current_sensor3_A, curr3_scaled,
@@ -1149,6 +1189,9 @@ void loop() {
     debug_min_mV = 1450.0;   // Min ADC reading in simulation
     debug_max_mV = 1650.0;   // Max ADC reading in simulation
   }
+
+  // Update 3-second voltage average used for LoRa transmission
+  updateVoltageTxAverage(AC_voltage_V);
   
   // Apply moving average filter to smooth readings
   current_sensor1_A = applyMovingAverage(current_sensor1_A, filter_curr1, filter_index1);

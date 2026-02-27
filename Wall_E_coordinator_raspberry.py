@@ -126,7 +126,8 @@ FREQUENCY = 433E6                  # LoRa frequency (Hz)
 
 # HMI THRESHOLDS
 VOLTAGE_MIN = 100.0                # Minimum acceptable voltage (V)
-VOLTAGE_MAX = 135.0                # Maximum acceptable voltage (V)
+VOLTAGE_MAX = 140.0                # Maximum acceptable voltage (V)
+VOLTAGE_SCALE_MAX = 130.0          # Telemetry scaling max (must match ESP32 packet scaling)
 CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
 CURRENT_YELLOW_THRESHOLD = 125.0   # <125mA = yellow warning
@@ -348,8 +349,8 @@ def send_request(device_id):
 # ============================================================================
 
 def unscale_voltage(scaled_value):
-    """Convert 8-bit scaled value back to voltage (0-255 = 0-130V RMS)"""
-    return (scaled_value / 255.0) * 130.0
+    """Convert 8-bit scaled value back to voltage (0-255 = 0-130V RMS)."""
+    return (scaled_value / 255.0) * VOLTAGE_SCALE_MAX
 
 def unscale_current(scaled_value):
     """Convert 8-bit scaled value back to current in mA (0-255 = 0-2550 mA)"""
@@ -699,7 +700,7 @@ class AppIndustrial:
         self.container.pack(expand=True, fill="both", padx=5)
 
         self.leds_v, self.lbls_v_val, self.frames_robot = [], [], []
-        self.uv_lamps = []  # per-node list of 2 active current indicators (CH1, CH3)
+        self.uv_lamps = []  # per-node list of 2 active current indicators (CH1, CH2)
 
         for i in range(NUM_DEVICES):
             # Creamos una "tarjeta" para cada robot
@@ -719,7 +720,7 @@ class AppIndustrial:
             lv.pack()
             self.lbls_v_val.append(lv)
 
-            # Indicadores de corriente activos (2 focos: CH1 y CH3)
+            # Indicadores de corriente activos (2 focos: CH1 y CH2)
             lamps_frame = tk.Frame(f, bg="#3a2a7a")
             lamps_frame.pack(pady=2)
             lamp_widgets = []
@@ -806,14 +807,14 @@ class AppIndustrial:
         self.registrar_log("TEST MODE OFF")
 
     def classify_current_status(self, current_mA):
-        """Return status and color for active current indicators (CH1 and CH3)."""
+        """Return textual assignment and color for active current indicators."""
         if current_mA < CURRENT_RED_THRESHOLD:
-            return "RED", "#e74c3c"
+            return "Ambas lámparas en fallo", "#e74c3c"
         if current_mA < CURRENT_YELLOW_THRESHOLD:
-            return "YELLOW", "#f1c40f"
+            return "Una lámpara en fallo", "#f1c40f"
         if current_mA <= CURRENT_MAX:
-            return "GREEN", "#2ecc71"
-        return "RED", "#e74c3c"
+            return "Lámparas funcionando OK", "#2ecc71"
+        return "Ambas lámparas en fallo", "#e74c3c"
 
     def actualizar_torreta(self, total_yellow, total_red, communication_failure):
         """
@@ -1022,7 +1023,7 @@ class AppIndustrial:
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
 
-        tk.Label(top, text=f"W-{device_id} - Estado Corriente (CH1 y CH3)",
+        tk.Label(top, text=f"W-{device_id} - Estado Corriente (CH1 y CH2)",
                  font=("Arial", 12, "bold"), bg="#1a1a1a", fg="#00ff00").pack(pady=10)
 
         frame = tk.Frame(top, bg="#1a1a1a")
@@ -1035,8 +1036,8 @@ class AppIndustrial:
             tk.Label(frame, text="Sin datos del nodo.", bg="#1a1a1a", fg="white").pack(pady=10)
         else:
             currents = [
-                ("CH1", data.get('curr1_mA', 0)),
-                ("CH3", data.get('curr3_mA', 0)),
+                ("CH1 lámparas UV 1 y 2", data.get('curr1_mA', 0)),
+                ("CH2 lámparas UV 3 y 4", data.get('curr3_mA', 0)),
             ]
 
             for channel_name, curr in currents:
