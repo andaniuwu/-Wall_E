@@ -807,14 +807,14 @@ class AppIndustrial:
         self.registrar_log("TEST MODE OFF")
 
     def classify_current_status(self, current_mA):
-        """Return textual assignment and color for active current indicators."""
+        """Return (status_code, color, description) for active current indicators."""
         if current_mA < CURRENT_RED_THRESHOLD:
-            return "Ambas lámparas en fallo", "#e74c3c"
+            return "RED", "#e74c3c", "Ambas lámparas en fallo"
         if current_mA < CURRENT_YELLOW_THRESHOLD:
-            return "Una lámpara en fallo", "#f1c40f"
+            return "YELLOW", "#f1c40f", "Una lámpara en fallo"
         if current_mA <= CURRENT_MAX:
-            return "Lámparas funcionando OK", "#2ecc71"
-        return "Ambas lámparas en fallo", "#e74c3c"
+            return "GREEN", "#2ecc71", "Lámparas funcionando OK"
+        return "RED", "#e74c3c", "Ambas lámparas en fallo"
 
     def actualizar_torreta(self, total_yellow, total_red, communication_failure):
         """
@@ -924,7 +924,7 @@ class AppIndustrial:
                         
                         # Count indicators for tower logic (CH1 and CH3 only)
                         if not self.test_mode or device_id == 1:
-                            for status, _ in current_status:
+                            for status, _, _ in current_status:
                                 if status == "RED":
                                     total_red_indicators += 1
                                 elif status == "YELLOW":
@@ -943,7 +943,7 @@ class AppIndustrial:
                         
                         self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill=color_v)
                         # Update active current indicators (CH1 and CH3)
-                        for lamp_i, (_, lamp_color) in enumerate(current_status):
+                        for lamp_i, (_, lamp_color, _) in enumerate(current_status):
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
                         self.lbls_v_val[idx].config(text=f"{voltage:.1f} V", fg="white" if v_ok else "#ff4444")
 
@@ -1041,7 +1041,7 @@ class AppIndustrial:
             ]
 
             for channel_name, curr in currents:
-                status, color = self.classify_current_status(curr)
+                _, color, description = self.classify_current_status(curr)
 
                 row = tk.Frame(frame, bg="#1a1a1a")
                 row.pack(fill="x", pady=4)
@@ -1052,7 +1052,7 @@ class AppIndustrial:
 
                 tk.Label(row, text=f"{channel_name}: {curr:.0f} mA",
                          font=("Arial", 10), bg="#1a1a1a", fg="white").pack(side="left")
-                tk.Label(row, text=status, font=("Arial", 10, "bold"), bg="#1a1a1a", fg=color).pack(side="right")
+                tk.Label(row, text=description, font=("Arial", 10, "bold"), bg="#1a1a1a", fg=color).pack(side="right")
 
         tk.Button(top, text="CERRAR", command=top.destroy, bg="red", fg="white",
                   font=("Arial", 10, "bold"), width=20).pack(pady=10)
