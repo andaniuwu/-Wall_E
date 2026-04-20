@@ -775,7 +775,7 @@ class AppIndustrial:
 
         # Carga imagen para el Mapa
         try:
-            m_img = Image.open("WALL-E HMI images/Bimbo.png")
+            m_img = Image.open("WALL-E HMI images/Walle_location_plant_santa_maria.png")
             self.img_layout_full = ImageTk.PhotoImage(m_img.resize((440, 550), Image.LANCZOS))
         except: 
             self.img_layout_full = None
@@ -1036,7 +1036,7 @@ class AppIndustrial:
 
     def mostrar_imagen_layout(self):
         if not self.img_layout_full:
-            messagebox.showwarning("Error", "No se encontró el mapa WALL-E HMI images/Bimbo.png")
+            messagebox.showwarning("Error", "No se encontró el mapa WALL-E HMI images/Walle_location_plant_santa_maria.png")
             return
         
         # Create a new window for the map
