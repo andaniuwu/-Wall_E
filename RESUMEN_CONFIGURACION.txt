@@ -1,0 +1,199 @@
+═════════════════════════════════════════════════════════════════════════════════
+  RESUMEN COMPLETO: CONFIGURACIÓN DE SEGURIDAD PI 4 (wall-e-user)
+═════════════════════════════════════════════════════════════════════════════════
+
+OBJETIVO:
+  • Tu usuario (rasp_raccoon_berry) entra con contraseña
+  • Usuario externo (wall-e-user) entra sin contraseña
+  • El programa se ejecuta automáticamente para wall-e-user
+  • Los archivos están protegidos (read-only)
+
+═════════════════════════════════════════════════════════════════════════════════
+PASO 1: CREAR USUARIO LIMITADO
+═════════════════════════════════════════════════════════════════════════════════
+
+Comando 1:
+  sudo useradd -m -s /bin/bash wall-e-user
+
+  ¿Qué hace?
+    - useradd: crea un nuevo usuario
+    - -m: crea la carpeta home (/home/wall-e-user)
+    - -s /bin/bash: establece bash como shell
+
+Comando 2:
+  sudo passwd wall-e-user
+
+  ¿Qué hace?
+    - Establece contraseña para wall-e-user
+    - Ingresa 2 veces la contraseña que prefieras
+
+═════════════════════════════════════════════════════════════════════════════════
+PASO 2: CONFIGURAR AUTOLOGIN PARA wall-e-user
+═════════════════════════════════════════════════════════════════════════════════
+
+Comando:
+  sudo nano /etc/lightdm/lightdm.conf
+
+Ubicación donde editar (línea ~100):
+  [Seat:*]
+  autologin-user=wall-e-user
+  autologin-user-timeout=0
+  #type=local
+  #pam-service=lightdm
+  ...
+
+¿Qué hace?
+  - autologin-user=wall-e-user: este usuario entra automáticamente
+  - autologin-user-timeout=0: entra inmediatamente sin esperar
+
+Guardado:
+  Ctrl+O (write out)
+  Enter (confirmar nombre)
+  Ctrl+X (exit)
+
+═════════════════════════════════════════════════════════════════════════════════
+PASO 3: CONFIGURAR INICIO AUTOMÁTICO DEL PROGRAMA
+═════════════════════════════════════════════════════════════════════════════════
+
+Comando:
+  sudo nano /home/wall-e-user/.bashrc
+
+Ubicación (al final del archivo):
+  Agrega estas líneas:
+
+  # Ejecutar programa automáticamente
+  export DISPLAY=:0
+  /home/rasp_raccoon_berry/Documents/Wall_E_UV-and-Voltage-sense/EJECUTAR_WALL_E.sh
+
+¿Qué hace?
+  - export DISPLAY=:0: configura la pantalla para X11
+  - EJECUTAR_WALL_E.sh: ejecuta el script portátil
+  - Se ejecuta cada vez que wall-e-user entra
+
+Guardado:
+  Ctrl+O
+  Enter
+  Ctrl+X
+
+═════════════════════════════════════════════════════════════════════════════════
+PASO 4: PROTEGER ARCHIVOS DEL PROYECTO
+═════════════════════════════════════════════════════════════════════════════════
+
+Comando 1:
+  cd /home/rasp_raccoon_berry/Documents/Wall_E_UV-and-Voltage-sense
+
+  ¿Qué hace?
+    - Navega a la carpeta del proyecto
+
+Comando 2:
+  sudo chmod -R 550 .
+
+  ¿Qué hace?
+    - chmod: cambia permisos de archivos
+    - -R: recursivo (todos los archivos y subcarpetas)
+    - 550: 
+      * 5 = dueño puede leer (r) y ejecutar (x), no escribir
+      * 5 = grupo puede leer y ejecutar
+      * 0 = otros no tienen permisos
+    - . = carpeta actual
+
+Comando 3:
+  sudo chown -R wall-e-user:wall-e-user .
+
+  ¿Qué hace?
+    - chown: cambia dueño de archivos
+    - -R: recursivo
+    - wall-e-user:wall-e-user = dueño:grupo
+    - . = carpeta actual
+
+  RESULTADO:
+    ✓ wall-e-user es dueño
+    ✓ Puede leer y ejecutar, no modificar
+    ✓ El código está protegido
+
+═════════════════════════════════════════════════════════════════════════════════
+PASO 5: DESACTIVAR AUTOLOGIN EN TU USUARIO
+═════════════════════════════════════════════════════════════════════════════════
+
+Comando:
+  sudo nano /etc/lightdm/lightdm.conf
+
+Cambio:
+  Antes:
+    autologin-user=wall-e-user
+    autologin-user-timeout=0
+
+  Después:
+    autologin-user=
+    autologin-user-timeout=0
+
+¿Qué hace?
+  - Deja vacío el autologin-user
+  - Ahora pide login a cualquier usuario
+  - Tú entras con rasp_raccoon_berry + contraseña
+
+Guardado:
+  Ctrl+O
+  Enter
+  Ctrl+X
+
+═════════════════════════════════════════════════════════════════════════════════
+RESUMEN FINAL
+═════════════════════════════════════════════════════════════════════════════════
+
+Archivo 1: /etc/lightdm/lightdm.conf
+  [Seat:*]
+  autologin-user=
+  autologin-user-timeout=0
+  ...resto del archivo...
+
+Archivo 2: /home/wall-e-user/.bashrc
+  ...contenido existente...
+  # Ejecutar programa automáticamente
+  export DISPLAY=:0
+  /home/rasp_raccoon_berry/Documents/Wall_E_UV-and-Voltage-sense/EJECUTAR_WALL_E.sh
+
+Permisos:
+  Carpeta del proyecto: 550 (read-only)
+  Dueño: wall-e-user:wall-e-user
+
+═════════════════════════════════════════════════════════════════════════════════
+FLUJO DE USO
+═════════════════════════════════════════════════════════════════════════════════
+
+1. Enciendes la Pi
+   ↓
+2. Aparece pantalla de login
+   ↓
+3. Opción A - TÚ entras:
+   Usuario: rasp_raccoon_berry
+   Contraseña: [tu contraseña]
+   → Acceso completo al escritorio
+   
+4. Opción B - USUARIO EXTERNO entra:
+   Usuario: wall-e-user
+   → Entra automáticamente SIN contraseña
+   → El programa abre automáticamente
+   → NO puede ver terminal ni modificar archivos
+   → Cierra programa → Se desconecta automáticamente
+
+═════════════════════════════════════════════════════════════════════════════════
+NOTAS DE SEGURIDAD
+═════════════════════════════════════════════════════════════════════════════════
+
+✓ El código fuente está protegido (read-only 550)
+✓ wall-e-user NO puede abrir terminal
+✓ wall-e-user NO puede modificar archivos
+✓ wall-e-user entra sin contraseña (conveniente)
+✓ Tú tienes acceso total con contraseña (seguro)
+✓ Sesiones separadas e independientes
+
+⚠ Si necesitas editar el código:
+  - Debes usar tu usuario (rasp_raccoon_berry)
+  - wall-e-user no puede hacer cambios
+
+⚠ Si quieres que wall-e-user tenga contraseña:
+  - Quita "autologin-user=wall-e-user" de lightdm.conf
+  - Pero entonces tendría que escribir contraseña para entrar
+
+═════════════════════════════════════════════════════════════════════════════════

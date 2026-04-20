@@ -1,0 +1,386 @@
+======================================================================
+          Wall-E Coordinator with HMI - DEMO MODE
+======================================================================
+Configuration:
+  - Number of devices: 9
+  - Demo update interval: 2.0 seconds
+  - Frequency: 433.0 MHz
+======================================================================
+✓ Demo mode enabled - using simulated data
+
+✓ System ready. Starting coordinator and HMI...
+
+✓ DEMO MODE - Coordinator thread started (simulated data)
+
+======================================================================
+Demo Cycle #1: 2026-02-09 17:19:18
+======================================================================
+  [Device 1] ✓ AC=21.2V I1=469mA I2=393mA I3=486mA I4=361mA (Seq=44660)
+  [Device 2] ✓ AC=8.6V I1=17mA I2=457mA I3=64mA I4=83mA (Seq=50684)
+  [Device 3] ✓ AC=19.8V I1=338mA I2=462mA I3=420mA I4=421mA (Seq=56975)
+⚠ HMI GPIO warning: Please set pin numbering mode using GPIO.setmode(GPIO.BOARD) or GPIO.setmode(GPIO.BCM)
+
+✓ HMI launched. Coordinator running in background.
+   Demo data will update every 2.0 seconds.
+   Close the GUI window to exit.
+
+  [Device 4] ✓ AC=21.1V I1=45mA I2=21mA I3=305mA I4=24mA (Seq=45362)
+  [Device 5] ✓ AC=8.1V I1=472mA I2=411mA I3=389mA I4=415mA (Seq=17108)
+  [Device 6] ✓ AC=19.4V I1=435mA I2=393mA I3=458mA I4=314mA (Seq=6875)
+  [Device 7] ✓ AC=22.8V I1=415mA I2=354mA I3=373mA I4=480mA (Seq=22189)
+  [Device 8] ✓ AC=22.4V I1=419mA I2=33mA I3=45mA I4=355mA (Seq=64625)
+  [Device 9] ✓ AC=19.7V I1=429mA I2=492mA I3=436mA I4=409mA (Seq=14357)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #2: 2026-02-09 17:19:23
+======================================================================
+  [Device 1] ✓ AC=21.3V I1=493mA I2=470mA I3=333mA I4=455mA (Seq=11567)
+  [Device 2] ✓ AC=23.3V I1=344mA I2=481mA I3=352mA I4=451mA (Seq=21672)
+  [Device 3] ✓ AC=10.5V I1=332mA I2=320mA I3=50mA I4=37mA (Seq=48323)
+  [Device 4] ✓ AC=20.1V I1=20mA I2=444mA I3=450mA I4=30mA (Seq=58965)
+  [Device 5] ✓ AC=23.3V I1=378mA I2=428mA I3=449mA I4=309mA (Seq=34768)
+  [Device 6] ✓ AC=19.1V I1=457mA I2=371mA I3=316mA I4=463mA (Seq=33792)
+  [Device 7] ✓ AC=9.3V I1=300mA I2=398mA I3=83mA I4=29mA (Seq=15701)
+  [Device 8] ✓ AC=21.8V I1=349mA I2=330mA I3=402mA I4=339mA (Seq=20134)
+  [Device 9] ✓ AC=8.8V I1=480mA I2=94mA I3=391mA I4=78mA (Seq=26301)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #3: 2026-02-09 17:19:28
+======================================================================
+  [Device 1] ✓ AC=19.4V I1=424mA I2=400mA I3=321mA I4=414mA (Seq=51302)
+  [Device 2] ✓ AC=19.3V I1=367mA I2=445mA I3=306mA I4=395mA (Seq=47738)
+  [Device 3] ✓ AC=19.6V I1=75mA I2=14mA I3=312mA I4=92mA (Seq=56331)
+  [Device 4] ✓ AC=20.6V I1=442mA I2=414mA I3=453mA I4=402mA (Seq=50947)
+  [Device 5] ✓ AC=23.7V I1=415mA I2=460mA I3=400mA I4=468mA (Seq=21503)
+  [Device 6] ✓ AC=20.5V I1=489mA I2=30mA I3=88mA I4=493mA (Seq=45572)
+  [Device 7] ✓ AC=8.3V I1=56mA I2=329mA I3=15mA I4=445mA (Seq=35080)
+  [Device 8] ✓ AC=20.1V I1=81mA I2=76mA I3=12mA I4=44mA (Seq=24367)
+  [Device 9] ✓ AC=9.4V I1=67mA I2=345mA I3=22mA I4=304mA (Seq=47056)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #4: 2026-02-09 17:19:32
+======================================================================
+  [Device 1] ✓ AC=22.3V I1=429mA I2=316mA I3=411mA I4=324mA (Seq=36612)
+  [Device 2] ✓ AC=22.9V I1=344mA I2=352mA I3=423mA I4=367mA (Seq=2568)
+  [Device 3] ✓ AC=23.0V I1=465mA I2=424mA I3=319mA I4=323mA (Seq=14638)
+  [Device 4] ✓ AC=20.0V I1=51mA I2=492mA I3=303mA I4=31mA (Seq=56054)
+  [Device 5] ✓ AC=23.6V I1=410mA I2=316mA I3=491mA I4=307mA (Seq=21306)
+  [Device 6] ✓ AC=21.5V I1=477mA I2=494mA I3=428mA I4=397mA (Seq=20384)
+  [Device 7] ✓ AC=18.9V I1=72mA I2=50mA I3=482mA I4=61mA (Seq=42385)
+  [Device 8] ✓ AC=20.6V I1=434mA I2=324mA I3=415mA I4=406mA (Seq=53595)
+  [Device 9] ✓ AC=23.9V I1=468mA I2=360mA I3=422mA I4=382mA (Seq=56780)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #5: 2026-02-09 17:19:37
+======================================================================
+  [Device 1] ✓ AC=22.9V I1=396mA I2=317mA I3=468mA I4=430mA (Seq=4020)
+  [Device 2] ✓ AC=21.4V I1=335mA I2=441mA I3=453mA I4=412mA (Seq=51172)
+  [Device 3] ✓ AC=18.1V I1=466mA I2=365mA I3=451mA I4=327mA (Seq=531)
+  [Device 4] ✓ AC=19.8V I1=393mA I2=317mA I3=472mA I4=368mA (Seq=43533)
+  [Device 5] ✓ AC=22.2V I1=404mA I2=417mA I3=334mA I4=384mA (Seq=62610)
+  [Device 6] ✓ AC=21.7V I1=474mA I2=484mA I3=410mA I4=351mA (Seq=1218)
+  [Device 7] ✓ AC=9.2V I1=23mA I2=70mA I3=476mA I4=44mA (Seq=29777)
+  [Device 8] ✓ AC=10.4V I1=393mA I2=71mA I3=59mA I4=24mA (Seq=43114)
+  [Device 9] ✓ AC=21.6V I1=428mA I2=323mA I3=370mA I4=405mA (Seq=63052)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #6: 2026-02-09 17:19:42
+======================================================================
+  [Device 1] ✓ AC=18.4V I1=58mA I2=32mA I3=467mA I4=352mA (Seq=62762)
+  [Device 2] ✓ AC=8.1V I1=331mA I2=419mA I3=35mA I4=94mA (Seq=32253)
+  [Device 3] ✓ AC=20.7V I1=493mA I2=485mA I3=494mA I4=311mA (Seq=12615)
+  [Device 4] ✓ AC=18.4V I1=482mA I2=326mA I3=483mA I4=488mA (Seq=16435)
+  [Device 5] ✓ AC=21.4V I1=403mA I2=465mA I3=415mA I4=334mA (Seq=57757)
+  [Device 6] ✓ AC=19.6V I1=50mA I2=70mA I3=90mA I4=462mA (Seq=25811)
+  [Device 7] ✓ AC=20.6V I1=438mA I2=402mA I3=360mA I4=385mA (Seq=33347)
+  [Device 8] ✓ AC=18.8V I1=397mA I2=486mA I3=440mA I4=374mA (Seq=24598)
+  [Device 9] ✓ AC=20.3V I1=364mA I2=494mA I3=331mA I4=459mA (Seq=47220)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #7: 2026-02-09 17:19:46
+======================================================================
+  [Device 1] ✓ AC=20.8V I1=440mA I2=417mA I3=327mA I4=333mA (Seq=63659)
+  [Device 2] ✓ AC=8.2V I1=480mA I2=439mA I3=367mA I4=55mA (Seq=51880)
+  [Device 3] ✓ AC=23.9V I1=314mA I2=312mA I3=469mA I4=332mA (Seq=723)
+  [Device 4] ✓ AC=19.2V I1=376mA I2=352mA I3=427mA I4=360mA (Seq=33148)
+  [Device 5] ✓ AC=9.5V I1=447mA I2=450mA I3=13mA I4=90mA (Seq=40684)
+  [Device 6] ✓ AC=23.9V I1=449mA I2=69mA I3=86mA I4=89mA (Seq=62249)
+  [Device 7] ✓ AC=22.2V I1=305mA I2=348mA I3=372mA I4=489mA (Seq=39499)
+  [Device 8] ✓ AC=20.6V I1=403mA I2=368mA I3=327mA I4=329mA (Seq=11856)
+  [Device 9] ✓ AC=19.0V I1=375mA I2=485mA I3=83mA I4=92mA (Seq=11426)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #8: 2026-02-09 17:19:51
+======================================================================
+  [Device 1] ✓ AC=9.9V I1=88mA I2=96mA I3=436mA I4=56mA (Seq=6063)
+  [Device 2] ✓ AC=20.7V I1=446mA I2=426mA I3=456mA I4=431mA (Seq=35139)
+  [Device 3] ✓ AC=18.3V I1=456mA I2=76mA I3=468mA I4=46mA (Seq=16603)
+  [Device 4] ✓ AC=22.0V I1=318mA I2=73mA I3=342mA I4=312mA (Seq=20321)
+  [Device 5] ✓ AC=22.2V I1=444mA I2=461mA I3=397mA I4=386mA (Seq=22395)
+  [Device 6] ✓ AC=20.3V I1=328mA I2=453mA I3=404mA I4=344mA (Seq=50715)
+  [Device 7] ✓ AC=21.3V I1=381mA I2=473mA I3=361mA I4=496mA (Seq=25719)
+  [Device 8] ✓ AC=19.4V I1=348mA I2=438mA I3=308mA I4=461mA (Seq=7606)
+  [Device 9] ✓ AC=19.3V I1=453mA I2=375mA I3=428mA I4=354mA (Seq=19789)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #9: 2026-02-09 17:19:56
+======================================================================
+  [Device 1] ✓ AC=19.8V I1=429mA I2=494mA I3=302mA I4=428mA (Seq=50836)
+  [Device 2] ✓ AC=19.3V I1=41mA I2=32mA I3=70mA I4=413mA (Seq=11448)
+  [Device 3] ✓ AC=20.7V I1=98mA I2=395mA I3=72mA I4=32mA (Seq=44501)
+  [Device 4] ✓ AC=8.5V I1=331mA I2=97mA I3=13mA I4=70mA (Seq=65482)
+  [Device 5] ✓ AC=19.3V I1=384mA I2=357mA I3=375mA I4=300mA (Seq=49430)
+  [Device 6] ✓ AC=22.0V I1=452mA I2=419mA I3=446mA I4=380mA (Seq=59680)
+  [Device 7] ✓ AC=18.1V I1=499mA I2=302mA I3=356mA I4=398mA (Seq=59763)
+  [Device 8] ✓ AC=20.5V I1=97mA I2=479mA I3=78mA I4=41mA (Seq=22350)
+  [Device 9] ✓ AC=22.3V I1=98mA I2=80mA I3=388mA I4=433mA (Seq=14262)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #10: 2026-02-09 17:20:01
+======================================================================
+  [Device 1] ✓ AC=8.9V I1=41mA I2=48mA I3=463mA I4=320mA (Seq=17426)
+  [Device 2] ✓ AC=22.6V I1=365mA I2=332mA I3=371mA I4=492mA (Seq=14989)
+  [Device 3] ✓ AC=23.3V I1=339mA I2=354mA I3=326mA I4=345mA (Seq=13008)
+  [Device 4] ✓ AC=8.9V I1=34mA I2=323mA I3=413mA I4=456mA (Seq=63832)
+  [Device 5] ✓ AC=22.7V I1=100mA I2=26mA I3=75mA I4=381mA (Seq=39553)
+  [Device 6] ✓ AC=19.4V I1=486mA I2=369mA I3=353mA I4=303mA (Seq=39178)
+  [Device 7] ✓ AC=21.9V I1=303mA I2=325mA I3=468mA I4=499mA (Seq=39610)
+  [Device 8] ✓ AC=9.6V I1=98mA I2=381mA I3=376mA I4=23mA (Seq=8385)
+  [Device 9] ✓ AC=23.5V I1=441mA I2=314mA I3=432mA I4=449mA (Seq=48996)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #11: 2026-02-09 17:20:05
+======================================================================
+  [Device 1] ✓ AC=20.0V I1=400mA I2=463mA I3=407mA I4=377mA (Seq=60861)
+  [Device 2] ✓ AC=22.1V I1=466mA I2=372mA I3=379mA I4=361mA (Seq=53053)
+  [Device 3] ✓ AC=22.9V I1=350mA I2=329mA I3=331mA I4=379mA (Seq=17569)
+  [Device 4] ✓ AC=9.1V I1=67mA I2=340mA I3=414mA I4=462mA (Seq=26143)
+  [Device 5] ✓ AC=22.8V I1=371mA I2=371mA I3=473mA I4=484mA (Seq=43915)
+  [Device 6] ✓ AC=19.2V I1=340mA I2=369mA I3=423mA I4=466mA (Seq=21185)
+  [Device 7] ✓ AC=9.6V I1=460mA I2=50mA I3=94mA I4=20mA (Seq=13021)
+  [Device 8] ✓ AC=20.8V I1=75mA I2=75mA I3=384mA I4=470mA (Seq=40333)
+  [Device 9] ✓ AC=21.5V I1=61mA I2=70mA I3=331mA I4=20mA (Seq=23599)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #12: 2026-02-09 17:20:10
+======================================================================
+  [Device 1] ✓ AC=22.5V I1=378mA I2=348mA I3=367mA I4=380mA (Seq=58433)
+  [Device 2] ✓ AC=10.3V I1=444mA I2=99mA I3=456mA I4=43mA (Seq=19211)
+  [Device 3] ✓ AC=21.1V I1=78mA I2=41mA I3=61mA I4=97mA (Seq=28223)
+  [Device 4] ✓ AC=23.2V I1=462mA I2=304mA I3=422mA I4=382mA (Seq=33122)
+  [Device 5] ✓ AC=23.8V I1=488mA I2=368mA I3=327mA I4=331mA (Seq=10457)
+  [Device 6] ✓ AC=18.2V I1=448mA I2=406mA I3=480mA I4=336mA (Seq=6858)
+  [Device 7] ✓ AC=21.3V I1=315mA I2=312mA I3=368mA I4=456mA (Seq=63214)
+  [Device 8] ✓ AC=23.5V I1=90mA I2=28mA I3=361mA I4=400mA (Seq=45902)
+  [Device 9] ✓ AC=19.8V I1=311mA I2=480mA I3=461mA I4=398mA (Seq=43178)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #13: 2026-02-09 17:20:15
+======================================================================
+  [Device 1] ✓ AC=20.2V I1=383mA I2=344mA I3=428mA I4=388mA (Seq=50145)
+  [Device 2] ✓ AC=18.9V I1=367mA I2=374mA I3=336mA I4=313mA (Seq=21112)
+  [Device 3] ✓ AC=18.2V I1=22mA I2=470mA I3=65mA I4=374mA (Seq=54596)
+  [Device 4] ✓ AC=21.9V I1=495mA I2=413mA I3=336mA I4=408mA (Seq=50665)
+  [Device 5] ✓ AC=20.3V I1=401mA I2=418mA I3=380mA I4=387mA (Seq=24387)
+  [Device 6] ✓ AC=23.7V I1=475mA I2=350mA I3=373mA I4=394mA (Seq=28318)
+  [Device 7] ✓ AC=19.6V I1=359mA I2=360mA I3=461mA I4=472mA (Seq=45495)
+  [Device 8] ✓ AC=20.2V I1=495mA I2=433mA I3=350mA I4=312mA (Seq=14955)
+  [Device 9] ✓ AC=21.3V I1=314mA I2=16mA I3=394mA I4=57mA (Seq=32267)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #14: 2026-02-09 17:20:19
+======================================================================
+  [Device 1] ✓ AC=20.4V I1=100mA I2=385mA I3=82mA I4=78mA (Seq=11341)
+  [Device 2] ✓ AC=18.8V I1=54mA I2=89mA I3=78mA I4=82mA (Seq=46612)
+  [Device 3] ✓ AC=18.4V I1=381mA I2=319mA I3=411mA I4=301mA (Seq=44266)
+  [Device 4] ✓ AC=21.6V I1=338mA I2=438mA I3=96mA I4=385mA (Seq=12543)
+  [Device 5] ✓ AC=21.9V I1=400mA I2=461mA I3=400mA I4=325mA (Seq=8047)
+  [Device 6] ✓ AC=18.5V I1=496mA I2=458mA I3=331mA I4=427mA (Seq=10979)
+  [Device 7] ✓ AC=20.4V I1=444mA I2=437mA I3=469mA I4=380mA (Seq=26725)
+  [Device 8] ✓ AC=8.7V I1=87mA I2=29mA I3=406mA I4=375mA (Seq=33676)
+  [Device 9] ✓ AC=19.5V I1=300mA I2=318mA I3=324mA I4=431mA (Seq=41099)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #15: 2026-02-09 17:20:24
+======================================================================
+  [Device 1] ✓ AC=18.8V I1=437mA I2=425mA I3=486mA I4=360mA (Seq=10152)
+  [Device 2] ✓ AC=22.8V I1=328mA I2=408mA I3=470mA I4=361mA (Seq=64332)
+  [Device 3] ✓ AC=21.9V I1=500mA I2=423mA I3=382mA I4=470mA (Seq=37831)
+  [Device 4] ✓ AC=20.4V I1=359mA I2=496mA I3=380mA I4=482mA (Seq=57828)
+  [Device 5] ✓ AC=9.0V I1=440mA I2=57mA I3=77mA I4=403mA (Seq=50277)
+  [Device 6] ✓ AC=19.5V I1=425mA I2=328mA I3=435mA I4=457mA (Seq=64339)
+  [Device 7] ✓ AC=18.5V I1=437mA I2=393mA I3=459mA I4=338mA (Seq=37669)
+  [Device 8] ✓ AC=19.1V I1=466mA I2=486mA I3=494mA I4=385mA (Seq=63440)
+  [Device 9] ✓ AC=21.1V I1=407mA I2=440mA I3=327mA I4=376mA (Seq=62587)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #16: 2026-02-09 17:20:29
+======================================================================
+  [Device 1] ✓ AC=18.5V I1=309mA I2=450mA I3=475mA I4=412mA (Seq=1660)
+  [Device 2] ✓ AC=20.9V I1=10mA I2=56mA I3=496mA I4=87mA (Seq=40636)
+  [Device 3] ✓ AC=23.8V I1=481mA I2=397mA I3=432mA I4=442mA (Seq=48506)
+  [Device 4] ✓ AC=9.7V I1=329mA I2=461mA I3=473mA I4=52mA (Seq=47288)
+  [Device 5] ✓ AC=23.5V I1=363mA I2=481mA I3=421mA I4=326mA (Seq=14070)
+  [Device 6] ✓ AC=19.7V I1=79mA I2=22mA I3=461mA I4=43mA (Seq=19822)
+  [Device 7] ✓ AC=20.9V I1=478mA I2=368mA I3=442mA I4=427mA (Seq=30483)
+  [Device 8] ✓ AC=22.6V I1=346mA I2=429mA I3=324mA I4=460mA (Seq=14220)
+  [Device 9] ✓ AC=23.7V I1=375mA I2=401mA I3=422mA I4=495mA (Seq=41654)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #17: 2026-02-09 17:20:33
+======================================================================
+  [Device 1] ✓ AC=23.7V I1=440mA I2=324mA I3=91mA I4=322mA (Seq=62187)
+  [Device 2] ✓ AC=18.2V I1=397mA I2=310mA I3=377mA I4=393mA (Seq=21570)
+  [Device 3] ✓ AC=21.6V I1=416mA I2=384mA I3=436mA I4=335mA (Seq=27267)
+  [Device 4] ✓ AC=10.4V I1=64mA I2=24mA I3=426mA I4=11mA (Seq=49360)
+  [Device 5] ✓ AC=19.3V I1=449mA I2=366mA I3=369mA I4=310mA (Seq=59224)
+  [Device 6] ✓ AC=20.9V I1=359mA I2=486mA I3=371mA I4=362mA (Seq=53324)
+  [Device 7] ✓ AC=22.7V I1=329mA I2=346mA I3=375mA I4=369mA (Seq=61141)
+  [Device 8] ✓ AC=21.9V I1=406mA I2=454mA I3=333mA I4=478mA (Seq=57150)
+  [Device 9] ✓ AC=24.0V I1=447mA I2=467mA I3=433mA I4=327mA (Seq=1141)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #18: 2026-02-09 17:20:38
+======================================================================
+  [Device 1] ✓ AC=21.6V I1=452mA I2=396mA I3=451mA I4=397mA (Seq=26094)
+  [Device 2] ✓ AC=18.2V I1=474mA I2=396mA I3=344mA I4=479mA (Seq=15509)
+  [Device 3] ✓ AC=23.0V I1=365mA I2=475mA I3=408mA I4=445mA (Seq=14501)
+  [Device 4] ✓ AC=21.1V I1=459mA I2=322mA I3=411mA I4=450mA (Seq=40592)
+  [Device 5] ✓ AC=22.8V I1=355mA I2=375mA I3=333mA I4=448mA (Seq=6444)
+  [Device 6] ✓ AC=19.5V I1=313mA I2=338mA I3=438mA I4=89mA (Seq=36856)
+  [Device 7] ✓ AC=20.4V I1=396mA I2=393mA I3=396mA I4=401mA (Seq=65046)
+  [Device 8] ✓ AC=21.2V I1=456mA I2=353mA I3=436mA I4=462mA (Seq=19374)
+  [Device 9] ✓ AC=23.9V I1=400mA I2=434mA I3=362mA I4=456mA (Seq=13537)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #19: 2026-02-09 17:20:43
+======================================================================
+  [Device 1] ✓ AC=21.8V I1=350mA I2=466mA I3=354mA I4=417mA (Seq=63660)
+  [Device 2] ✓ AC=22.6V I1=435mA I2=309mA I3=422mA I4=441mA (Seq=12658)
+  [Device 3] ✓ AC=21.3V I1=350mA I2=483mA I3=346mA I4=337mA (Seq=4120)
+  [Device 4] ✓ AC=20.4V I1=364mA I2=497mA I3=419mA I4=478mA (Seq=26410)
+  [Device 5] ✓ AC=23.9V I1=64mA I2=381mA I3=365mA I4=92mA (Seq=17229)
+  [Device 6] ✓ AC=8.6V I1=53mA I2=422mA I3=401mA I4=396mA (Seq=7749)
+  [Device 7] ✓ AC=22.8V I1=401mA I2=382mA I3=440mA I4=376mA (Seq=16006)
+  [Device 8] ✓ AC=19.1V I1=448mA I2=465mA I3=332mA I4=449mA (Seq=5432)
+  [Device 9] ✓ AC=23.0V I1=327mA I2=436mA I3=389mA I4=386mA (Seq=31753)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+======================================================================
+Demo Cycle #20: 2026-02-09 17:20:48
+======================================================================
+  [Device 1] ✓ AC=20.3V I1=458mA I2=379mA I3=93mA I4=45mA (Seq=19685)
+  [Device 2] ✓ AC=23.8V I1=388mA I2=455mA I3=347mA I4=326mA (Seq=46251)
+  [Device 3] ✓ AC=23.6V I1=314mA I2=446mA I3=362mA I4=449mA (Seq=40878)
+  [Device 4] ✓ AC=21.2V I1=310mA I2=498mA I3=376mA I4=467mA (Seq=9380)
+  [Device 5] ✓ AC=20.2V I1=365mA I2=410mA I3=381mA I4=417mA (Seq=56281)
+
+✓ Shutting down...
+  Waiting for coordinator thread to stop...
+  [Device 6] ✓ AC=8.3V I1=320mA I2=322mA I3=86mA I4=73mA (Seq=39277)
+  [Device 7] ✓ AC=20.5V I1=446mA I2=419mA I3=497mA I4=470mA (Seq=13359)
+  [Device 8] ✓ AC=23.0V I1=375mA I2=19mA I3=13mA I4=462mA (Seq=45873)
+  [Device 9] ✓ AC=23.3V I1=490mA I2=430mA I3=483mA I4=360mA (Seq=52940)
+
+Demo Summary:
+  - Total devices simulated: 9
+
+Waiting 2.0 seconds for next cycle...
+
+✓ Demo coordinator thread stopped
+✓ Exited successfully
+
