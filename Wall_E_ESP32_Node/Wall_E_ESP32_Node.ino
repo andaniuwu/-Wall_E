@@ -22,7 +22,7 @@ LAMPS DESCRIPTION:
 
 ARCHITECTURE:
   - Central Hub: Raspberry Pi 4 (receiver/coordinator)
-  - Remote Nodes: Up to 9 ESP32 units (transmitters/responders)
+  - Remote Nodes: Up to 255 ESP32 units (transmitters/responders)
   - Communication: LoRa point-to-point on 433MHz
   - Protocol: Request/Response with acknowledgment
 
@@ -45,14 +45,14 @@ COMMUNICATION PROTOCOL:
     [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
     - NET_ID: Network identifier (0xA5 for private network)
     - MSG_REQ: Message type = 0x10 (request)
-    - TARGET_ID: 1-9 (device ID to query)
+    - TARGET_ID: 1-255 (device ID to query)
     - REQ_CODE: 0x01 (read sensor data)
 
   Response Packet (from ESP32):
     [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_SCALED | CURR2_SCALED | CURR3_SCALED | CURR4_SCALED]
     - NET_ID: Echo network ID (0xA5)
     - MSG_RESP: Message type = 0x90 (response)
-    - DEVICE_ID: 1-9 (sender device ID)
+    - DEVICE_ID: 1-255 (sender device ID)
     - SEQ_LO | SEQ_HI: 16-bit sequence number for tracking
     - AC_V_SCALED: AC voltage scaled 0-255 (maps 0.0-130.0 V RMS)
     - CURR1_SCALED: Current 1 scaled 0-255 (maps 0-2550 mA or 0-2.55A)
@@ -76,7 +76,7 @@ OPERATION FLOW:
   6. Returns to listening mode
 
 ADJUSTMENTS PER INSTALLATION:
-  - TX_ID: Set to 1-9 for each device (line 149)
+  - TX_ID: Set to 1-255 for each device (line 149)
   - CURRENT_MEASUREMENT_AC: Set true for AC mode (RMS×5) or false for DC mode (line 265)
   - SIMULATE_MODE: Set true to test without sensors, false for real deployment (line 268)
   - CURRENT_THRESHOLD_MIN/MAX: For optional firmware-level filtering if needed (lines 277-278)
@@ -170,17 +170,21 @@ Adafruit_NeoPixel neopixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 // ============================================================================
 
 /*
- * **CRITICAL: Set TX_ID to 1-9, UNIQUE for each device**
+ * **CRITICAL: Set TX_ID to 1-255, UNIQUE for each device**
  * 
  * Device 1: TX_ID = 1
  * Device 2: TX_ID = 2
  * Device 3: TX_ID = 3
  * ...
- * Device 9: TX_ID = 9
+ * Device 11: TX_ID = 11
  *
  * Each ESP32 must have a different TX_ID to identify itself to the coordinator
  */
-#define TX_ID           1     // CHANGE THIS FOR EACH DEVICE (1-9) !!!
+#define TX_ID           1     // CHANGE THIS FOR EACH DEVICE (1-255) !!!
+
+#if (TX_ID < 1) || (TX_ID > 255)
+#error "TX_ID must be between 1 and 255"
+#endif
 
 // ============================================================================
 // PROTOCOL CONSTANTS

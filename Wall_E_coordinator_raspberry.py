@@ -8,7 +8,7 @@
 This program runs on the Raspberry Pi 4 and acts as the central coordinator
 for the Wall-E monitoring system. It:
 
-1. Periodically queries each of the 9 remote ESP32 devices
+1. Periodically queries each configured remote ESP32 device
 2. Receives status responses from the devices
 3. Logs and displays the sensor data
 4. Alerts on status changes or communication failures
@@ -24,7 +24,7 @@ HARDWARE:
   - GPIO4=DIO0, GPIO17=DIO1, GPIO18=DIO2, GPIO27=DIO3, GPIO22=RST
 
 CONFIGURATION:
-  - NUM_DEVICES: Number of remote nodes (1-9)
+    - NUM_DEVICES: Number of remote nodes (1-255)
   - QUERY_INTERVAL: Seconds between polling cycles
   - RESPONSE_TIMEOUT: Seconds to wait for response from each device
   - FREQUENCY: LoRa frequency (433E6 for 433 MHz)
@@ -119,7 +119,10 @@ REG_PAYLOAD_LENGTH = 0x22
 # SYSTEM CONFIGURATION
 # ============================================================================
 
-NUM_DEVICES = 9                    # Number of remote nodes (1-9)
+NUM_DEVICES = 11                   # Number of remote nodes to poll
+MIN_DEVICE_ID = 1                  # Protocol minimum device ID
+MAX_DEVICE_ID = 255                # 1 byte in packet supports IDs up to 255
+HMI_GRID_COLUMNS = 4               # Grid columns for node cards in HMI
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
 RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
@@ -288,6 +291,10 @@ def configure_lora():
 
 def send_request(device_id):
     """Send a read request to specific device"""
+    if not (MIN_DEVICE_ID <= device_id <= MAX_DEVICE_ID):
+        print(f"[TX ERROR] Device ID out of range: {device_id}")
+        return False
+
     try:
         # Build 4-byte request packet
         request = bytearray([NET_ID, MSG_REQ, device_id, REQ_READ_DATA])
@@ -427,6 +434,9 @@ def parse_response(packet, device_id):
     curr4_scaled = packet[9]
     
     # Validate response
+    if not (MIN_DEVICE_ID <= resp_id <= MAX_DEVICE_ID):
+        return None
+
     if net_id != NET_ID or msg_type != MSG_RESP or resp_id != device_id:
         return None
     
@@ -695,7 +705,7 @@ class AppIndustrial:
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
 
-        # --- PANEL DE ROBOTS (DISTRIBUCIÓN 3-3-3) ---
+        # --- PANEL DE ROBOTS ---
         self.container = tk.Frame(self.root, bg="#483698")
         self.container.pack(expand=True, fill="both", padx=5)
 
@@ -705,7 +715,7 @@ class AppIndustrial:
         for i in range(NUM_DEVICES):
             # Creamos una "tarjeta" para cada robot
             f = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
-            f.grid(row=i // 3, column=i % 3, padx=5, pady=8, sticky="nsew")
+            f.grid(row=i // HMI_GRID_COLUMNS, column=i % HMI_GRID_COLUMNS, padx=5, pady=8, sticky="nsew")
             self.frames_robot.append(f)
 
             tk.Label(f, text=f"W-{i+1}", font=("Arial", 9, "bold"), bg="#ffc72c", fg="black").pack(fill="x")
@@ -740,7 +750,8 @@ class AppIndustrial:
             f.bind("<Button-1>", lambda e, node_id=i+1: self.mostrar_detalle_lamparas(node_id))
 
         # Configurar columnas iguales
-        for j in range(3): self.container.grid_columnconfigure(j, weight=1)
+        for j in range(HMI_GRID_COLUMNS):
+            self.container.grid_columnconfigure(j, weight=1)
 
         # --- BOTONERA INFERIOR ---
         self.f_btn = tk.Frame(self.root, bg="#483698")
@@ -1254,6 +1265,10 @@ def coordinator_loop():
 def main():
     """Main entry point - initializes hardware and launches HMI + coordinator"""
     global coordinator_running, coordinator_thread
+
+    if not (MIN_DEVICE_ID <= NUM_DEVICES <= MAX_DEVICE_ID):
+        print(f"✗ Invalid NUM_DEVICES={NUM_DEVICES}. Valid range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
+        return 1
     
     print("="*70)
     if DEMO_MODE:
@@ -1263,6 +1278,7 @@ def main():
     print("="*70)
     print(f"Configuration:")
     print(f"  - Number of devices: {NUM_DEVICES}")
+    print(f"  - Supported ID range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
     if DEMO_MODE:
         print(f"  - Demo update interval: {DEMO_UPDATE_INTERVAL} seconds")
     else:
