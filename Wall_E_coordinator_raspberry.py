@@ -160,6 +160,7 @@ shared_device_data = {}            # Device status shared between coordinator th
 current_scanning_device = 0        # Currently scanning device ID (for HMI display)
 coordinator_running = False        # Flag to control coordinator thread
 coordinator_thread = None          # Reference to coordinator thread
+restart_requested = False          # Request flag to relaunch app after clean shutdown
 
 # ============================================================================
 # SPI COMMUNICATION FUNCTIONS
@@ -768,9 +769,7 @@ class AppIndustrial:
         
         # Admin buttons
         admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
-        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=2, column=0, columnspan=2, sticky="we", padx=2, pady=2)
-        tk.Button(self.f_btn, text="REINICIAR SISTEMA", command=self.reiniciar_sistema, **admin_style).grid(row=2, column=2, sticky="we", padx=2, pady=2)
-        tk.Button(self.f_btn, text="APAGAR", command=self.apagar_sistema, **admin_style).grid(row=2, column=3, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=2, column=0, columnspan=4, sticky="we", padx=2, pady=2)
         self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
 
         # Carga imagen para el Mapa
@@ -824,24 +823,13 @@ class AppIndustrial:
         self.registrar_log("TEST MODE OFF")
 
     def reiniciar_programa(self):
-        """Reiniciar el programa (exit y dejar que se reabre automáticamente)"""
+        """Reiniciar programa: cierra y vuelve a abrir automaticamente."""
         if messagebox.askyesno("Reiniciar", "¿Reiniciar el programa?"):
             self.registrar_log("REINICIANDO PROGRAMA...")
-            global coordinator_running
+            global coordinator_running, restart_requested
+            restart_requested = True
             coordinator_running = False
             self.root.after(500, lambda: self.root.quit())
-
-    def reiniciar_sistema(self):
-        """Reiniciar la Raspberry Pi"""
-        if messagebox.askyesno("ATENCIÓN", "¿Reiniciar el sistema? (esto apagará y encenderá la Pi)"):
-            self.registrar_log("REINICIANDO SISTEMA...")
-            os.system("sudo reboot")
-
-    def apagar_sistema(self):
-        """Apagar la Raspberry Pi"""
-        if messagebox.askyesno("ATENCIÓN", "¿Apagar el sistema? (esto apagará la Pi)"):
-            self.registrar_log("APAGANDO SISTEMA...")
-            os.system("sudo poweroff")
 
     def classify_current_status(self, current_mA):
         """Return (status_code, color, description) for active current indicators."""
@@ -1264,7 +1252,7 @@ def coordinator_loop():
 
 def main():
     """Main entry point - initializes hardware and launches HMI + coordinator"""
-    global coordinator_running, coordinator_thread
+    global coordinator_running, coordinator_thread, restart_requested
 
     if not (MIN_DEVICE_ID <= NUM_DEVICES <= MAX_DEVICE_ID):
         print(f"✗ Invalid NUM_DEVICES={NUM_DEVICES}. Valid range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
@@ -1338,6 +1326,15 @@ def main():
                 print("✓ Resources cleaned up")
             except Exception as e:
                 print(f"⚠ Cleanup warning: {e}")
+
+        if restart_requested:
+            try:
+                restart_requested = False
+                cmd = [sys.executable] + sys.argv
+                subprocess.Popen(cmd, cwd=os.getcwd())
+                print("✓ Reinicio de programa solicitado: nueva instancia iniciada")
+            except Exception as e:
+                print(f"✗ No se pudo reiniciar el programa automaticamente: {e}")
         
         print("✓ Exited successfully\n")
     
