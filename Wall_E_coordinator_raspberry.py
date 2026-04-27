@@ -133,8 +133,9 @@ VOLTAGE_MAX = 140.0                # Maximum acceptable voltage (V)
 VOLTAGE_SCALE_MAX = 130.0          # Telemetry scaling max (must match ESP32 packet scaling)
 CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
-CURRENT_YELLOW_THRESHOLD = 125.0   # <125mA = yellow warning
-CURRENT_RED_THRESHOLD = 50.0       # <50mA = red fault
+# Yellow threshold is kept only for backward compatibility; yellow tower logic is disabled.
+CURRENT_YELLOW_THRESHOLD = 125.0
+CURRENT_RED_THRESHOLD = 150.0      # <150mA = red fault + alarm
 
 # ALARM TOLERANCE CONFIGURATION
 MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before triggering alarm
@@ -835,8 +836,6 @@ class AppIndustrial:
         """Return (status_code, color, description) for active current indicators."""
         if current_mA < CURRENT_RED_THRESHOLD:
             return "RED", "#e74c3c", "Ambas lámparas en fallo"
-        if current_mA < CURRENT_YELLOW_THRESHOLD:
-            return "YELLOW", "#f1c40f", "Una lámpara en fallo"
         if current_mA <= CURRENT_MAX:
             return "GREEN", "#2ecc71", "Lámparas funcionando OK"
         return "RED", "#e74c3c", "Ambas lámparas en fallo"
@@ -851,8 +850,9 @@ class AppIndustrial:
             communication_failure: True if any device has >= MAX_CONSECUTIVE_FAILURES
         """
         try:
-            red_active = communication_failure or total_red >= 2
-            yellow_active = (not red_active) and (total_red == 1 or total_yellow >= 1)
+            # Yellow tower behavior intentionally disabled.
+            red_active = communication_failure or total_red >= 1
+            yellow_active = False
             green_active = (not red_active) and (not yellow_active)
 
             # Only update relays if state changed to reduce GPIO interference with SPI
@@ -951,7 +951,7 @@ class AppIndustrial:
                         if not self.test_mode or device_id == 1:
                             # Add voltage status to indicators
                             # If voltage is very low (0-10V), it's a critical failure (RED)
-                            # If voltage is out of range but not critical, it's a warning (YELLOW)
+                            # If voltage is out of range but not critical, keep yellow bookkeeping only.
                             if voltage < 10:
                                 total_red_indicators += 1
                             elif not v_ok:
@@ -1014,7 +1014,7 @@ class AppIndustrial:
         # Update buzzer independently (called every 1 second)
         self.actualizar_buzzer()
 
-        if total_red_indicators >= 2 or communication_failure_detected:
+        if total_red_indicators >= 1 or communication_failure_detected:
             self.activar_alerta("FALLA SISTEMA")
         else:
             self.limpiar_alerta()
