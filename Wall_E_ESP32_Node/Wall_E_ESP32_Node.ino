@@ -277,7 +277,18 @@ const float ACS712_BASELINE_CORRECTION_A = 0.040f;  // Software correction: subt
 //   - Keep at 1.000f to preserve current real-site calibration (~122Vrms)
 //   - Optional normalization to nominal 127Vrms: 127.0 / 122.0 = 1.041f
 //   - Effective voltage = computed_voltage * VOLTAGE_CAL_FACTOR
-#define VOLTAGE_CAL_FACTOR 1.000f
+//
+// QUICK VOLTAGE CALIBRATION GUIDE:
+//   1) Measure real mains with multimeter (V_real).
+//   2) Read firmware value in serial/HMI (V_fw).
+//   3) Update factor using:
+//        VOLTAGE_CAL_FACTOR_NEW = VOLTAGE_CAL_FACTOR_OLD * (V_real / V_fw)
+//   4) Reflash and verify with 10-20 samples (avoid single-sample tuning).
+//
+// Example:
+//   If firmware shows 113V and multimeter shows 118V:
+//   factor_new = factor_old * (118/113) = factor_old * 1.044
+#define VOLTAGE_CAL_FACTOR 1.100f
 
 // ZMPT_OFFSET_mV: Systematic offset correction for ADC readings
 //   Root Cause: The ESP32 ADC and signal conditioning have a ~7mV systematic bias
@@ -299,6 +310,32 @@ const float ACS712_BASELINE_CORRECTION_A = 0.040f;  // Software correction: subt
 // CURRENT MEASUREMENT MODE: Choose between AC and DC measurement
 // Set to true for AC measurement (RMS), false for DC measurement (average)
 #define CURRENT_MEASUREMENT_AC true
+
+// Per-channel current gain trim (fine calibration).
+// S3 is boosted based on observed stable delta in serial logs.
+//
+// QUICK CURRENT CALIBRATION GUIDE (S1/S3):
+//   Use the serial line:
+//     [CAL S1-S3] S1=...mA | S3=...mA | DELTA=...mA
+//
+//   A) Match absolute value to multimeter (same load on both channels):
+//      gain_new = gain_old * (I_real / I_fw)
+//
+//   B) Match channels to each other (reduce DELTA):
+//      If S3 < S1 consistently -> increase CURRENT_GAIN_CH3
+//      If S3 > S1 consistently -> decrease CURRENT_GAIN_CH3
+//
+// Practical tuning order:
+//   1) First set CH1 to multimeter reference.
+//   2) Then tune CH3 to match CH1.
+//   3) Re-check against multimeter and do one final small correction.
+//
+// Tip:
+//   Tune with averaged values over ~20-60s, not single lines.
+#define CURRENT_GAIN_CH1 0.765f
+#define CURRENT_GAIN_CH2 1.000f
+#define CURRENT_GAIN_CH3 1.085f
+#define CURRENT_GAIN_CH4 1.000f
 
 // TEST/SIMULATION MODE: Set to true to simulate sensor values for communication testing
 // Set to false to use real sensor readings from ACS712T + ZMPT101B
@@ -685,6 +722,12 @@ float readDC_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES) {
   // current = voltage_diff / sensitivity
   float current_A = (voltage_diff_mV / 1000.0f) / ACS712_SENSITIVITY_VpA;
 
+  // Apply per-channel gain trim for calibration matching between channels.
+  if (pin == CURRENT_SENSOR1) current_A *= CURRENT_GAIN_CH1;
+  else if (pin == CURRENT_SENSOR2) current_A *= CURRENT_GAIN_CH2;
+  else if (pin == CURRENT_SENSOR3) current_A *= CURRENT_GAIN_CH3;
+  else if (pin == CURRENT_SENSOR4) current_A *= CURRENT_GAIN_CH4;
+
   // Clamp to valid range (ACS712T rated 0-5A)
   if (current_A < 0.0f) current_A = 0.0f;
   if (current_A > ACS712_MAX_CURRENT_A) current_A = ACS712_MAX_CURRENT_A;
@@ -727,6 +770,12 @@ float readRMS_and_convertToCurrent(uint8_t pin, uint16_t samples = ADC_SAMPLES, 
 
     // Convert this RMS voltage to current
     float current_A = (rms_voltage_mV / 1000.0f) / ACS712_SENSITIVITY_VpA;
+
+    // Apply per-channel gain trim for calibration matching between channels.
+    if (pin == CURRENT_SENSOR1) current_A *= CURRENT_GAIN_CH1;
+    else if (pin == CURRENT_SENSOR2) current_A *= CURRENT_GAIN_CH2;
+    else if (pin == CURRENT_SENSOR3) current_A *= CURRENT_GAIN_CH3;
+    else if (pin == CURRENT_SENSOR4) current_A *= CURRENT_GAIN_CH4;
     
     // Apply software baseline correction (subtract residual ~40mA)
     current_A -= ACS712_BASELINE_CORRECTION_A;
@@ -1223,6 +1272,13 @@ void loop() {
     }
     Serial.printf("Current: CURR1=%.2fA CURR2=%.2fA CURR3=%.2fA CURR4=%.2fA | AC Voltage: %.1fV RMS\n",
       current_sensor1_A, current_sensor2_A, current_sensor3_A, current_sensor4_A, AC_voltage_V);
+
+    // Dedicated calibration line for active channels S1 and S3
+    float delta_s1_s3_A = current_sensor1_A - current_sensor3_A;
+    Serial.printf("[CAL S1-S3] S1=%.0fmA | S3=%.0fmA | DELTA=%.0fmA\n",
+      current_sensor1_A * 1000.0f,
+      current_sensor3_A * 1000.0f,
+      delta_s1_s3_A * 1000.0f);
     
     // Detailed debug output (CURR1 only - others available if USE_ONLY_SENSOR1 is disabled)
     float vpp_mV = debug_max_mV - debug_min_mV;
