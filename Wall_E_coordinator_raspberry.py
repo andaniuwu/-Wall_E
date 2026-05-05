@@ -131,11 +131,9 @@ FREQUENCY = 433E6                  # LoRa frequency (Hz)
 VOLTAGE_MIN = 100.0                # Minimum acceptable voltage (V)
 VOLTAGE_MAX = 140.0                # Maximum acceptable voltage (V)
 VOLTAGE_SCALE_MAX = 130.0          # Telemetry scaling max (must match ESP32 packet scaling)
-CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
+CURRENT_MIN = 150.0                # Minimum acceptable current per lamp (mA) = 0.15A
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
-# Yellow threshold is kept only for backward compatibility; yellow tower logic is disabled.
-CURRENT_YELLOW_THRESHOLD = 125.0
-CURRENT_RED_THRESHOLD = 150.0      # <150mA = red fault + alarm
+CURRENT_RED_THRESHOLD = 150.0      # <150mA = red fault
 
 # ALARM TOLERANCE CONFIGURATION
 MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before triggering alarm
@@ -154,6 +152,7 @@ spi = None
 last_response = {}                 # Track last response from each device
 device_stats = {}                  # Statistics for each device
 device_consecutive_failures = {}   # Track consecutive failures per device for alarm tolerance
+device_consecutive_sensor_errors = {}  # Track consecutive sensor-error reads per device
 
 # Shared data structure for HMI (thread-safe)
 device_data_lock = threading.Lock()
@@ -462,13 +461,27 @@ def parse_response(packet, device_id):
         'timestamp': datetime.now()
     }
 
+
+def has_sensor_error(response):
+    """Return True when a node reading is in error according to direct thresholds."""
+    voltage = response.get('ac_voltage_V', 0.0)
+    curr1 = response.get('curr1_mA', 0.0)
+    curr3 = response.get('curr3_mA', 0.0)
+
+    voltage_error = voltage < VOLTAGE_MIN
+    current_error = (
+        curr1 < CURRENT_RED_THRESHOLD or curr1 > CURRENT_MAX or
+        curr3 < CURRENT_RED_THRESHOLD or curr3 > CURRENT_MAX
+    )
+    return voltage_error or current_error
+
 # ============================================================================
 # QUERY CYCLE
 # ============================================================================
 
 def query_device(device_id):
     """Query single device and collect response"""
-    global current_scanning_device, device_data_lock, device_consecutive_failures
+    global current_scanning_device, device_data_lock, device_consecutive_failures, device_consecutive_sensor_errors
     
     # Update shared variable so HMI knows which device we're scanning
     with device_data_lock:
@@ -500,6 +513,12 @@ def query_device(device_id):
                     
                     # Reset consecutive failure counter on successful response
                     device_consecutive_failures[device_id] = 0
+
+                    # Track consecutive sensor errors (used for delayed tower alarm)
+                    if has_sensor_error(response):
+                        device_consecutive_sensor_errors[device_id] = device_consecutive_sensor_errors.get(device_id, 0) + 1
+                    else:
+                        device_consecutive_sensor_errors[device_id] = 0
                     
                     return response
                 else:
@@ -762,15 +781,15 @@ class AppIndustrial:
         b_style = {"font": ("Arial", 8, "bold"), "bg": "#ffc72c", "height": 2, "activebackground": "#e6b422"}
         
         tk.Button(self.f_btn, text="SILENCIAR", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="ACTIVAR SONIDO + RESET", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="ACTIVAR SONIDO", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
         tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
         tk.Button(self.f_btn, text="MAPA", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
-        tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
+        # tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
+        # tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
         
         # Admin buttons
         admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
-        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=2, column=0, columnspan=4, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=4, sticky="we", padx=2, pady=2)
         self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
 
         # Carga imagen para el Mapa
@@ -840,18 +859,17 @@ class AppIndustrial:
             return "GREEN", "#2ecc71", "Lámparas funcionando OK"
         return "RED", "#e74c3c", "Ambas lámparas en fallo"
 
-    def actualizar_torreta(self, total_yellow, total_red, communication_failure):
+    def actualizar_torreta(self, confirmed_sensor_failure, communication_failure):
         """
         Update physical tower light and buzzer based on system health
         
         Args:
-            total_yellow: Number of yellow current indicators across all nodes
-            total_red: Number of red current indicators across all nodes
+            confirmed_sensor_failure: True if any node remains in sensor error >= MAX_CONSECUTIVE_FAILURES reads
             communication_failure: True if any device has >= MAX_CONSECUTIVE_FAILURES
         """
         try:
             # Yellow tower behavior intentionally disabled.
-            red_active = communication_failure or total_red >= 1
+            red_active = communication_failure or confirmed_sensor_failure
             yellow_active = False
             green_active = (not red_active) and (not yellow_active)
 
@@ -921,10 +939,9 @@ class AppIndustrial:
 
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
-        global shared_device_data, device_data_lock, device_consecutive_failures
-        
-        total_yellow_indicators = 0
-        total_red_indicators = 0
+        global shared_device_data, device_data_lock, device_consecutive_failures, device_consecutive_sensor_errors
+
+        confirmed_sensor_failure_detected = False
         communication_failure_detected = False
 
         try:
@@ -940,28 +957,16 @@ class AppIndustrial:
                         curr1 = data.get('curr1_mA', 0)
                         curr3 = data.get('curr3_mA', 0)
                         
-                        # Voltage indicator keeps original logic
-                        v_ok = VOLTAGE_MIN <= voltage <= VOLTAGE_MAX
+                        # Direct error: voltage is only faulted when below minimum threshold.
+                        v_ok = voltage >= VOLTAGE_MIN
                         current_status = [
                             self.classify_current_status(curr1),
                             self.classify_current_status(curr3),
                         ]
-                        
-                        # Count indicators for tower logic (CH1 and CH3 + Voltage)
-                        if not self.test_mode or device_id == 1:
-                            # Add voltage status to indicators
-                            # If voltage is very low (0-10V), it's a critical failure (RED)
-                            # If voltage is out of range but not critical, keep yellow bookkeeping only.
-                            if voltage < 10:
-                                total_red_indicators += 1
-                            elif not v_ok:
-                                total_yellow_indicators += 1
-                            
-                            for status, _, _ in current_status:
-                                if status == "RED":
-                                    total_red_indicators += 1
-                                elif status == "YELLOW":
-                                    total_yellow_indicators += 1
+
+                        # Confirmed sensor error only after MAX_CONSECUTIVE_FAILURES reads per node
+                        if (not self.test_mode or device_id == 1) and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                            confirmed_sensor_failure_detected = True
 
                         # Check consecutive failures instead of timestamp
                         # Only trigger alarm after MAX_CONSECUTIVE_FAILURES (prevents false alarms during LoRa recovery)
@@ -993,6 +998,8 @@ class AppIndustrial:
                             # Only trigger alarm if Device 1 has exceeded failure threshold
                             if device_id == 1 and consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
+                            if device_id == 1 and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                                confirmed_sensor_failure_detected = True
                         else:
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
                             for lamp_i in range(2):
@@ -1001,20 +1008,22 @@ class AppIndustrial:
                             # Only trigger alarm if exceeded failure threshold
                             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
+                            if device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                                confirmed_sensor_failure_detected = True
         
         except Exception as e:
             print(f"HMI update error: {e}")
 
         # Update tower status based on system health (only if state changed)
-        current_state = (total_yellow_indicators, total_red_indicators, communication_failure_detected)
+        current_state = (confirmed_sensor_failure_detected, communication_failure_detected)
         if current_state != self.last_tower_state:
-            self.actualizar_torreta(total_yellow_indicators, total_red_indicators, communication_failure_detected)
+            self.actualizar_torreta(confirmed_sensor_failure_detected, communication_failure_detected)
             self.last_tower_state = current_state
         
         # Update buzzer independently (called every 1 second)
         self.actualizar_buzzer()
 
-        if total_red_indicators >= 1 or communication_failure_detected:
+        if confirmed_sensor_failure_detected or communication_failure_detected:
             self.activar_alerta("FALLA SISTEMA")
         else:
             self.limpiar_alerta()
@@ -1106,11 +1115,10 @@ class AppIndustrial:
             pass
 
     def reset(self):
-        """Reset alerts and re-enable sound"""
+        """Re-enable sound"""
         self.sonido_habil = True
-        self.limpiar_alerta()
-        print("[RESET] Alertas limpiadas y sonido re-habilitado")
-        self.registrar_log("Reset manual - Sonido re-habilitado")
+        print("[SONIDO] Sonido re-habilitado")
+        self.registrar_log("Sonido re-habilitado")
 
     def registrar_log(self, info):
         try:
