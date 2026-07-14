@@ -724,26 +724,37 @@ class AppIndustrial:
         self.header = tk.Frame(self.root, bg="#483698")
         self.header.pack(fill="x", padx=15, pady=10)
 
+        # Left frame for Bimbo logo
+        left_frame = tk.Frame(self.header, bg="#483698")
+        left_frame.pack(side="left")
+        
         try:
-            # Bimbo logo
             img_b = Image.open("WALL-E HMI images/Grupo_Bimbo.png").convert("RGBA")
             self.photo = ImageTk.PhotoImage(img_b.resize((70, 35), Image.LANCZOS))
-            tk.Label(self.header, image=self.photo, bg="#483698").pack(side="left")
+            tk.Label(left_frame, image=self.photo, bg="#483698").pack()
+        except:
+            tk.Label(left_frame, text="BIMBO", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack()
 
-            # Moldex logo
+        # Center frame for title and clock
+        center_frame = tk.Frame(self.header, bg="#483698")
+        center_frame.pack(side="left", expand=True, fill="both")
+        
+        tk.Label(center_frame, text="LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack()
+        
+        self.lbl_reloj = tk.Label(center_frame, text="", font=("Courier", 11, "bold"), fg="#00ff00", bg="#483698")
+        self.lbl_reloj.pack()
+        self.actualizar_hora()
+
+        # Right frame for Moldex logo
+        right_frame = tk.Frame(self.header, bg="#483698")
+        right_frame.pack(side="right")
+        
+        try:
             img_m = Image.open("WALL-E HMI images/Moldex1.png").convert("RGBA")
             self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
-            tk.Label(self.header, image=self.photo2, bg="#483698").pack(side="left", padx=15)
+            tk.Label(right_frame, image=self.photo2, bg="#483698").pack()
         except:
-            tk.Label(self.header, text="DASHBOARD", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack(side="left")
-
-        # Title in center
-        tk.Label(self.header, text="LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack(side="left", expand=True)
-
-        # Clock on right
-        self.lbl_reloj = tk.Label(self.header, text="", font=("Courier", 12, "bold"), fg="#00ff00", bg="#483698")
-        self.lbl_reloj.pack(side="right")
-        self.actualizar_hora()
+            tk.Label(right_frame, text="MOLDEX", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack()
 
         # --- SCANNING STATUS ---
         self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
