@@ -3,6 +3,8 @@
 ================================================================================
                     Wall-E Coordinator - Raspberry Pi
               Request/Response LoRa Communication Handler
+              
+              Developed by: Andani Emmanuel Lopez Arechar
 ================================================================================
 
 This program runs on the Raspberry Pi 4 and acts as the central coordinator
