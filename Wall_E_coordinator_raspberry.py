@@ -720,52 +720,53 @@ class AppIndustrial:
         self.buzzer_off_time = 0.0
         self.test_mode = False
 
-        # --- ENCABEZADO (Logos e Iconos) ---
+        # --- HEADER (Logos, Title, Clock) ---
         self.header = tk.Frame(self.root, bg="#483698")
         self.header.pack(fill="x", padx=15, pady=10)
 
         try:
-            # Logo Bimbo como icono (sin recuadro blanco)
+            # Bimbo logo
             img_b = Image.open("WALL-E HMI images/Grupo_Bimbo.png").convert("RGBA")
             self.photo = ImageTk.PhotoImage(img_b.resize((70, 35), Image.LANCZOS))
             tk.Label(self.header, image=self.photo, bg="#483698").pack(side="left")
 
-            # Logo Moldex como icono
+            # Moldex logo
             img_m = Image.open("WALL-E HMI images/Moldex1.png").convert("RGBA")
             self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
             tk.Label(self.header, image=self.photo2, bg="#483698").pack(side="left", padx=15)
         except:
             tk.Label(self.header, text="DASHBOARD", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack(side="left")
 
-        # Reloj en la esquina superior derecha
+        # Title in center
+        tk.Label(self.header, text="LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack(side="left", expand=True)
+
+        # Clock on right
         self.lbl_reloj = tk.Label(self.header, text="", font=("Courier", 12, "bold"), fg="#00ff00", bg="#483698")
         self.lbl_reloj.pack(side="right")
         self.actualizar_hora()
 
-        tk.Label(self.root, text="MONITOREO DE LÁMPARAS", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack(pady=2)
-
-        # --- ESTADO DE ESCANEO ---
+        # --- SCANNING STATUS ---
         self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
         self.status_frame.pack(fill="x", padx=10, pady=2)
-        self.lbl_scanning = tk.Label(self.status_frame, text="Escaneando: W-0", font=("Arial", 8, "bold"), 
+        self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: W-0", font=("Arial", 8, "bold"), 
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
 
-        # --- PAGINACIÓN ---
+        # --- PAGINATION ---
         self.current_page = 0
         self.total_pages = (NUM_DEVICES + NODES_PER_PAGE - 1) // NODES_PER_PAGE
         
         self.page_frame = tk.Frame(self.root, bg="#483698")
         self.page_frame.pack(fill="x", padx=5, pady=2)
         
-        tk.Button(self.page_frame, text="◀ ANT", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
+        tk.Button(self.page_frame, text="◀ PREV", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
                  command=self.pagina_anterior, width=12, height=2).pack(side="left", padx=3, pady=3)
         
-        self.lbl_page = tk.Label(self.page_frame, text=f"Página 1 de {self.total_pages}", font=("Arial", 7, "bold"),
+        self.lbl_page = tk.Label(self.page_frame, text=f"Page 1 of {self.total_pages}", font=("Arial", 7, "bold"),
                                 bg="#483698", fg="#ffc72c")
         self.lbl_page.pack(side="left", expand=True, padx=5)
         
-        tk.Button(self.page_frame, text="SIG ▶", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
+        tk.Button(self.page_frame, text="NEXT ▶", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
                  command=self.pagina_siguiente, width=12, height=2).pack(side="right", padx=3, pady=3)
 
         # --- PANEL DE ROBOTS ---
@@ -812,7 +813,7 @@ class AppIndustrial:
             self.uv_lamps.append(lamp_widgets)
 
             # Botón DETALLE para ver lámparas individuales
-            tk.Button(f, text="DET", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
+            tk.Button(f, text="VIEW", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
                      command=lambda device_id=i+1: self.mostrar_detalle_lamparas(device_id),
                      height=1, padx=2).pack(fill="x", pady=2)
 
@@ -832,10 +833,10 @@ class AppIndustrial:
         
         b_style = {"font": ("Arial", 7, "bold"), "bg": "#ffc72c", "height": 1, "activebackground": "#e6b422"}
         
-        tk.Button(self.f_btn, text="SILENCIAR", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="ACTIVAR SONIDO", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="MUTE", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="SOUND ON", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
         tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="MAPA", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="MAP", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
         # tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
         # tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
         
@@ -899,7 +900,7 @@ class AppIndustrial:
         # Update page label
         start_device = self.current_page * NODES_PER_PAGE + 1
         end_device = min((self.current_page + 1) * NODES_PER_PAGE, NUM_DEVICES)
-        self.lbl_page.config(text=f"Página {self.current_page + 1} de {self.total_pages} (W-{start_device} a W-{end_device})")
+        self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (W-{start_device} to W-{end_device})")
     
     def actualizar_estado_escaneo(self):
         """Update scanning device status"""
@@ -908,9 +909,9 @@ class AppIndustrial:
             with device_data_lock:
                 device_id = current_scanning_device
             if device_id > 0:
-                self.lbl_scanning.config(text=f"Escaneando: W-{device_id}")
+                self.lbl_scanning.config(text=f"Scanning: W-{device_id}")
             else:
-                self.lbl_scanning.config(text="Escaneando: W-0")
+                self.lbl_scanning.config(text="Scanning: W-0")
         except:
             pass
 
@@ -1118,7 +1119,7 @@ class AppIndustrial:
         
         # Create a new window for the map
         top = tk.Toplevel(self.root)
-        top.title("Mapa de Planta - Wall-E")
+        top.title("Plant Map - Wall-E")
         top.geometry("350x500")
         top.configure(bg="#222222")
         top.resizable(True, True)
@@ -1135,17 +1136,17 @@ class AppIndustrial:
         frame_btn = tk.Frame(top, bg="#222222")
         frame_btn.pack(side="bottom", fill="x", padx=10, pady=10)
         
-        tk.Button(frame_btn, text="CERRAR", command=top.destroy, bg="red", fg="white", 
+        tk.Button(frame_btn, text="CLOSE", command=top.destroy, bg="red", fg="white", 
                  font=("Arial", 10, "bold"), width=20).pack(pady=5)
 
     def mostrar_detalle_lamparas(self, device_id):
         """Open a window showing per-lamp UV status for a device"""
         top = tk.Toplevel(self.root)
-        top.title(f"Detalle Corriente Activa - W-{device_id}")
+        top.title(f"Current Status - W-{device_id}")
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
 
-        tk.Label(top, text=f"W-{device_id} - Estado Corriente (CH1 y CH2)",
+        tk.Label(top, text=f"W-{device_id} - Active Channels (CH1 & CH2)",
                  font=("Arial", 12, "bold"), bg="#1a1a1a", fg="#00ff00").pack(pady=10)
 
         frame = tk.Frame(top, bg="#1a1a1a")
@@ -1155,11 +1156,11 @@ class AppIndustrial:
             data = shared_device_data.get(device_id)
 
         if not data:
-            tk.Label(frame, text="Sin datos del nodo.", bg="#1a1a1a", fg="white").pack(pady=10)
+            tk.Label(frame, text="No data from node.", bg="#1a1a1a", fg="white").pack(pady=10)
         else:
             currents = [
-                ("CH1 lámparas UV 1 y 2", data.get('curr1_mA', 0)),
-                ("CH2 lámparas UV 3 y 4", data.get('curr3_mA', 0)),
+                ("CH1 UV Lamps 1 & 2", data.get('curr1_mA', 0)),
+                ("CH2 UV Lamps 3 & 4", data.get('curr3_mA', 0)),
             ]
 
             for channel_name, curr in currents:
@@ -1176,7 +1177,7 @@ class AppIndustrial:
                          font=("Arial", 10), bg="#1a1a1a", fg="white").pack(side="left")
                 tk.Label(row, text=description, font=("Arial", 10, "bold"), bg="#1a1a1a", fg=color).pack(side="right")
 
-        tk.Button(top, text="CERRAR", command=top.destroy, bg="red", fg="white",
+        tk.Button(top, text="CLOSE", command=top.destroy, bg="red", fg="white",
                   font=("Arial", 10, "bold"), width=20).pack(pady=10)
 
     def activar_alerta(self, msg):
@@ -1210,14 +1211,14 @@ class AppIndustrial:
     def abrir_historial(self):
         # Create a new window for logs
         pop = tk.Toplevel(self.root)
-        pop.title("Historial de Eventos - Wall-E")
+        pop.title("Event History - Wall-E")
         pop.geometry("350x450")
         pop.resizable(True, True)
         
         # Frame for title
         frame_title = tk.Frame(pop, bg="#1a1a1a", height=40)
         frame_title.pack(fill="x")
-        tk.Label(frame_title, text="ÚLTIMOS EVENTOS", font=("Arial", 12, "bold"), 
+        tk.Label(frame_title, text="RECENT EVENTS", font=("Arial", 12, "bold"), 
                 bg="#1a1a1a", fg="#00ff00").pack(pady=5)
         
         # Frame for text and scrollbar
