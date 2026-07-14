@@ -741,7 +741,7 @@ class AppIndustrial:
         center_frame = tk.Frame(self.header, bg="#483698")
         center_frame.pack(side="left", expand=True, fill="both")
         
-        tk.Label(center_frame, text="LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack()
+        tk.Label(center_frame, text="UV LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack()
         
         self.lbl_reloj = tk.Label(center_frame, text="", font=("Courier", 11, "bold"), fg="#00ff00", bg="#483698")
         self.lbl_reloj.pack()
