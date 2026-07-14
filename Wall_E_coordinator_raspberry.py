@@ -33,8 +33,6 @@ CONFIGURATION:
 """
 
 import time
-import RPi.GPIO as GPIO
-import spidev
 import sys
 import os
 import subprocess
@@ -44,6 +42,17 @@ import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
 import random
+
+# Try to import RPi-specific modules; gracefully skip in demo mode
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    GPIO = None
+
+try:
+    import spidev
+except ImportError:
+    spidev = None
 
 # ============================================================================
 # HARDWARE CONFIGURATION
@@ -70,6 +79,8 @@ RELAY_ACTIVE_LOW = True  # Set True if relay outputs are active-low
 
 def set_relay(pin, on):
     """Helper to drive relay outputs with optional active-low logic."""
+    if GPIO is None or DEMO_MODE:
+        return  # Skip GPIO operations in demo mode or when GPIO unavailable
     try:
         if RELAY_ACTIVE_LOW:
             GPIO.output(pin, GPIO.LOW if on else GPIO.HIGH)
@@ -119,10 +130,11 @@ REG_PAYLOAD_LENGTH = 0x22
 # SYSTEM CONFIGURATION
 # ============================================================================
 
-NUM_DEVICES = 11                   # Number of remote nodes to poll
+NUM_DEVICES = 50                   # Number of remote nodes to poll
 MIN_DEVICE_ID = 1                  # Protocol minimum device ID
 MAX_DEVICE_ID = 255                # 1 byte in packet supports IDs up to 255
 HMI_GRID_COLUMNS = 4               # Grid columns for node cards in HMI
+NODES_PER_PAGE = 20                # 4 cols x 5 rows per page
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
 RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
@@ -141,7 +153,7 @@ MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before trigg
                                    # With QUERY_INTERVAL=5s, 3 failures = 15 seconds tolerance
 
 # DEMO MODE (for testing without real hardware)
-DEMO_MODE = False                  # Set to False for real hardware testing with ESP32
+DEMO_MODE = True                   # Set to False for real hardware testing with ESP32
 DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 
 # ============================================================================
@@ -183,8 +195,15 @@ def initialize_hardware():
     """Initialize GPIO and SPI for LoRa module"""
     global spi
     
+    if DEMO_MODE:
+        print("✓ Demo mode: skipping hardware initialization")
+        return True
+    
     # Setup GPIO
     try:
+        if GPIO is None:
+            print("✗ RPi.GPIO not available")
+            return False
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         GPIO.setup([GPIO_DIO0, GPIO_DIO1, GPIO_DIO2, GPIO_DIO3], GPIO.IN)
@@ -202,6 +221,9 @@ def initialize_hardware():
 
     # Setup SPI
     try:
+        if spidev is None:
+            print("✗ spidev not available")
+            return False
         spi = spidev.SpiDev()
         spi.open(SPI_BUS, SPI_DEVICE)
         spi.max_speed_hz = SPI_SPEED
@@ -214,6 +236,9 @@ def initialize_hardware():
 
 def configure_lora():
     """Configure LoRa module for receiver operation"""
+    if DEMO_MODE:
+        print("\u2713 Demo mode: skipping LoRa configuration")
+        return True
     try:
         # 1. Set to sleep mode first
         spi_write(REG_OP_MODE, 0x80)  # Sleep mode
@@ -681,7 +706,7 @@ class AppIndustrial:
     def __init__(self, root):
         self.root = root
         self.root.title("WALL-E MONITOR")
-        self.root.geometry("480x800")
+        self.root.geometry("480x800")  # 7-inch touch screen (portrait) with taskbar
         self.root.configure(bg="#483698")
         
         self.sonido_habil = True  
@@ -710,62 +735,86 @@ class AppIndustrial:
             self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
             tk.Label(self.header, image=self.photo2, bg="#483698").pack(side="left", padx=15)
         except:
-            tk.Label(self.header, text="DASHBOARD", fg="white", bg="#483698", font=("Arial", 10, "bold")).pack(side="left")
+            tk.Label(self.header, text="DASHBOARD", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack(side="left")
 
         # Reloj en la esquina superior derecha
         self.lbl_reloj = tk.Label(self.header, text="", font=("Courier", 12, "bold"), fg="#00ff00", bg="#483698")
         self.lbl_reloj.pack(side="right")
         self.actualizar_hora()
 
-        tk.Label(self.root, text="MONITOREO DE LÁMPARAS", font=("Arial", 13, "bold"), fg="white", bg="#483698").pack(pady=5)
+        tk.Label(self.root, text="MONITOREO DE LÁMPARAS", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack(pady=2)
 
         # --- ESTADO DE ESCANEO ---
         self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
         self.status_frame.pack(fill="x", padx=10, pady=2)
-        self.lbl_scanning = tk.Label(self.status_frame, text="Escaneando: W-0", font=("Arial", 9, "bold"), 
+        self.lbl_scanning = tk.Label(self.status_frame, text="Escaneando: W-0", font=("Arial", 8, "bold"), 
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
 
+        # --- PAGINACIÓN ---
+        self.current_page = 0
+        self.total_pages = (NUM_DEVICES + NODES_PER_PAGE - 1) // NODES_PER_PAGE
+        
+        self.page_frame = tk.Frame(self.root, bg="#483698")
+        self.page_frame.pack(fill="x", padx=5, pady=2)
+        
+        tk.Button(self.page_frame, text="◀ ANT", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
+                 command=self.pagina_anterior, width=12, height=2).pack(side="left", padx=3, pady=3)
+        
+        self.lbl_page = tk.Label(self.page_frame, text=f"Página 1 de {self.total_pages}", font=("Arial", 7, "bold"),
+                                bg="#483698", fg="#ffc72c")
+        self.lbl_page.pack(side="left", expand=True, padx=5)
+        
+        tk.Button(self.page_frame, text="SIG ▶", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
+                 command=self.pagina_siguiente, width=12, height=2).pack(side="right", padx=3, pady=3)
+
         # --- PANEL DE ROBOTS ---
         self.container = tk.Frame(self.root, bg="#483698")
-        self.container.pack(expand=True, fill="both", padx=5)
-
+        self.container.pack(expand=True, fill="both", padx=2, pady=1)
+        
         self.leds_v, self.lbls_v_val, self.frames_robot = [], [], []
         self.uv_lamps = []  # per-node list of 2 active current indicators (CH1, CH2)
 
         for i in range(NUM_DEVICES):
             # Creamos una "tarjeta" para cada robot
             f = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
-            f.grid(row=i // HMI_GRID_COLUMNS, column=i % HMI_GRID_COLUMNS, padx=5, pady=8, sticky="nsew")
+            # Calcular posición dentro de la página
+            pos_in_page = i % NODES_PER_PAGE
+            row = pos_in_page // HMI_GRID_COLUMNS
+            col = pos_in_page % HMI_GRID_COLUMNS
+            f.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+            # Guardar posición y página para navegación
+            f.device_id = i + 1
+            f.page_num = i // NODES_PER_PAGE
             self.frames_robot.append(f)
 
-            tk.Label(f, text=f"W-{i+1}", font=("Arial", 9, "bold"), bg="#ffc72c", fg="black").pack(fill="x")
+            tk.Label(f, text=f"W-{i+1}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
             
             # LED Alimentación
-            cv = tk.Canvas(f, width=50, height=50, bg="#3a2a7a", highlightthickness=0)
-            cv.pack()
-            circ_v = cv.create_oval(8, 8, 42, 42, fill="#555555", outline="white")
+            cv = tk.Canvas(f, width=35, height=35, bg="#3a2a7a", highlightthickness=0)
+            cv.pack(pady=0)
+            circ_v = cv.create_oval(6, 6, 29, 29, fill="#555555", outline="white")
             self.leds_v.append((cv, circ_v))
             
-            lv = tk.Label(f, text="--- V", font=("Arial", 8, "bold"), bg="#3a2a7a", fg="#ff4444")
+            lv = tk.Label(f, text="--- V", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
             lv.pack()
             self.lbls_v_val.append(lv)
 
             # Indicadores de corriente activos (2 focos: CH1 y CH2)
             lamps_frame = tk.Frame(f, bg="#3a2a7a")
-            lamps_frame.pack(pady=2)
+            lamps_frame.pack(pady=0)
             lamp_widgets = []
             for lamp_idx in range(2):
-                lamp_canvas = tk.Canvas(lamps_frame, width=16, height=16, bg="#3a2a7a", highlightthickness=0)
-                lamp_canvas.grid(row=0, column=lamp_idx, padx=2)
-                lamp_circle = lamp_canvas.create_oval(3, 3, 13, 13, fill="#555555", outline="white")
+                lamp_canvas = tk.Canvas(lamps_frame, width=14, height=14, bg="#3a2a7a", highlightthickness=0)
+                lamp_canvas.grid(row=0, column=lamp_idx, padx=1)
+                lamp_circle = lamp_canvas.create_oval(2, 2, 12, 12, fill="#555555", outline="white")
                 lamp_widgets.append((lamp_canvas, lamp_circle))
             self.uv_lamps.append(lamp_widgets)
 
             # Botón DETALLE para ver lámparas individuales
-            tk.Button(f, text="DETALLE", font=("Arial", 7, "bold"), bg="#ffc72c", fg="black",
+            tk.Button(f, text="DET", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
                      command=lambda device_id=i+1: self.mostrar_detalle_lamparas(device_id),
-                     height=1, padx=2).pack(fill="x", pady=1)
+                     height=1, padx=2).pack(fill="x", pady=2)
 
             # Click para ver detalle por nodo
             f.bind("<Button-1>", lambda e, node_id=i+1: self.mostrar_detalle_lamparas(node_id))
@@ -773,12 +822,15 @@ class AppIndustrial:
         # Configurar columnas iguales
         for j in range(HMI_GRID_COLUMNS):
             self.container.grid_columnconfigure(j, weight=1)
+        
+        # Mostrar solo la primera página
+        self.refresh_page()
 
         # --- BOTONERA INFERIOR ---
         self.f_btn = tk.Frame(self.root, bg="#483698")
-        self.f_btn.pack(side="bottom", fill="x", pady=15)
+        self.f_btn.pack(side="bottom", fill="x", pady=1)
         
-        b_style = {"font": ("Arial", 8, "bold"), "bg": "#ffc72c", "height": 2, "activebackground": "#e6b422"}
+        b_style = {"font": ("Arial", 7, "bold"), "bg": "#ffc72c", "height": 1, "activebackground": "#e6b422"}
         
         tk.Button(self.f_btn, text="SILENCIAR", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
         tk.Button(self.f_btn, text="ACTIVAR SONIDO", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
@@ -801,12 +853,15 @@ class AppIndustrial:
 
         # Setup GPIO for tower indicators
         try:
-            initial_off = GPIO.HIGH if RELAY_ACTIVE_LOW else GPIO.LOW
-            GPIO.setup(PIN_GREEN_TURRET, GPIO.OUT, initial=initial_off)
-            GPIO.setup(PIN_YELLOW_TURRET, GPIO.OUT, initial=initial_off)
-            GPIO.setup(PIN_RED_TURRET, GPIO.OUT, initial=initial_off)
-            GPIO.setup(PIN_BUZZER, GPIO.OUT, initial=initial_off)
-            print("✓ Tower GPIO initialized")
+            if GPIO is not None and not DEMO_MODE:
+                initial_off = GPIO.HIGH if RELAY_ACTIVE_LOW else GPIO.LOW
+                GPIO.setup(PIN_GREEN_TURRET, GPIO.OUT, initial=initial_off)
+                GPIO.setup(PIN_YELLOW_TURRET, GPIO.OUT, initial=initial_off)
+                GPIO.setup(PIN_RED_TURRET, GPIO.OUT, initial=initial_off)
+                GPIO.setup(PIN_BUZZER, GPIO.OUT, initial=initial_off)
+                print("✓ Tower GPIO initialized")
+            else:
+                print("⚠ Tower GPIO skipped (demo mode or GPIO unavailable)")
         except Exception as e:
             print(f"⚠ Tower GPIO warning: {e}")
 
@@ -820,6 +875,31 @@ class AppIndustrial:
         self.lbl_reloj.config(text=datetime.now().strftime("%H:%M:%S"))
         self.actualizar_estado_escaneo()
         self.root.after(1000, self.actualizar_hora)
+    
+    def pagina_anterior(self):
+        """Navigate to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.refresh_page()
+    
+    def pagina_siguiente(self):
+        """Navigate to next page"""
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.refresh_page()
+    
+    def refresh_page(self):
+        """Update visibility of frames based on current page"""
+        for f in self.frames_robot:
+            if f.page_num == self.current_page:
+                f.grid()
+            else:
+                f.grid_remove()
+        
+        # Update page label
+        start_device = self.current_page * NODES_PER_PAGE + 1
+        end_device = min((self.current_page + 1) * NODES_PER_PAGE, NUM_DEVICES)
+        self.lbl_page.config(text=f"Página {self.current_page + 1} de {self.total_pages} (W-{start_device} a W-{end_device})")
     
     def actualizar_estado_escaneo(self):
         """Update scanning device status"""
@@ -1039,7 +1119,7 @@ class AppIndustrial:
         # Create a new window for the map
         top = tk.Toplevel(self.root)
         top.title("Mapa de Planta - Wall-E")
-        top.geometry("500x750")
+        top.geometry("350x500")
         top.configure(bg="#222222")
         top.resizable(True, True)
         
@@ -1131,7 +1211,7 @@ class AppIndustrial:
         # Create a new window for logs
         pop = tk.Toplevel(self.root)
         pop.title("Historial de Eventos - Wall-E")
-        pop.geometry("500x600")
+        pop.geometry("350x450")
         pop.resizable(True, True)
         
         # Frame for title
@@ -1329,8 +1409,10 @@ def main():
         
         if not DEMO_MODE:
             try:
-                spi.close()
-                GPIO.cleanup()
+                if spi is not None:
+                    spi.close()
+                if GPIO is not None:
+                    GPIO.cleanup()
                 print("✓ Resources cleaned up")
             except Exception as e:
                 print(f"⚠ Cleanup warning: {e}")
