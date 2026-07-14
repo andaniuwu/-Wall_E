@@ -853,7 +853,7 @@ class AppIndustrial:
         
         # Admin buttons
         admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
-        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=4, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="RESTART PROGRAM", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=4, sticky="we", padx=2, pady=2)
         self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
 
         # Carga imagen para el Mapa
@@ -935,8 +935,8 @@ class AppIndustrial:
         self.registrar_log("TEST MODE OFF")
 
     def reiniciar_programa(self):
-        """Reiniciar programa: cierra y vuelve a abrir automaticamente."""
-        if messagebox.askyesno("Reiniciar", "¿Reiniciar el programa?"):
+        """Restart program: closes and reopens automatically."""
+        if messagebox.askyesno("Restart", "Restart the program?"):
             self.registrar_log("REINICIANDO PROGRAMA...")
             global coordinator_running, restart_requested
             restart_requested = True
@@ -946,10 +946,10 @@ class AppIndustrial:
     def classify_current_status(self, current_mA):
         """Return (status_code, color, description) for active current indicators."""
         if current_mA < CURRENT_RED_THRESHOLD:
-            return "RED", "#e74c3c", "Ambas lámparas en fallo"
+            return "RED", "#e74c3c", "Both lamps failed"
         if current_mA <= CURRENT_MAX:
-            return "GREEN", "#2ecc71", "Lámparas funcionando OK"
-        return "RED", "#e74c3c", "Ambas lámparas en fallo"
+            return "GREEN", "#2ecc71", "Lamps working OK"
+        return "RED", "#e74c3c", "Both lamps failed"
 
     def actualizar_torreta(self, confirmed_sensor_failure, communication_failure):
         """
@@ -1252,7 +1252,7 @@ class AppIndustrial:
                 content = "".join(reversed(logs))
                 txt.insert("1.0", content)
         except:
-            txt.insert("1.0", "No hay registros previos.")
+            txt.insert("1.0", "No previous records.")
         
         txt.config(state="disabled")  # Make it read-only
         
@@ -1260,19 +1260,19 @@ class AppIndustrial:
         frame_btn = tk.Frame(pop, bg="#1a1a1a", height=50)
         frame_btn.pack(fill="x", padx=5, pady=5)
         
-        tk.Button(frame_btn, text="CERRAR", command=pop.destroy, bg="red", fg="white",
+        tk.Button(frame_btn, text="CLOSE", command=pop.destroy, bg="red", fg="white",
                  font=("Arial", 10, "bold"), width=20).pack(side="left", padx=5)
-        tk.Button(frame_btn, text="LIMPIAR LOGS", command=self.limpiar_logs, bg="orange", fg="white",
+        tk.Button(frame_btn, text="CLEAR LOGS", command=self.limpiar_logs, bg="orange", fg="white",
                  font=("Arial", 10, "bold"), width=20).pack(side="left", padx=5)
     
     def limpiar_logs(self):
         """Clear the security log file"""
         try:
             with open("log_seguridad.csv", "w") as f:
-                f.write("Logs limpiados el {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            messagebox.showinfo("Éxito", "Logs limpiados correctamente")
+                f.write("Logs cleared on {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            messagebox.showinfo("Success", "Logs cleared successfully")
         except Exception as e:
-            messagebox.showerror("Error", f"Error al limpiar logs: {e}")
+            messagebox.showerror("Error", f"Error clearing logs: {e}")
 
 # ============================================================================
 # COORDINATOR THREAD
