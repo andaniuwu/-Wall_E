@@ -1131,7 +1131,7 @@ class AppIndustrial:
         # Create a new window for the map
         top = tk.Toplevel(self.root)
         top.title("Plant Map - Wall-E")
-        top.geometry("700x600")
+        top.geometry("450x650")
         top.configure(bg="#222222")
         top.resizable(True, True)
         
