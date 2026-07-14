@@ -937,7 +937,7 @@ class AppIndustrial:
     def reiniciar_programa(self):
         """Restart program: closes and reopens automatically."""
         if messagebox.askyesno("Restart", "Restart the program?"):
-            self.registrar_log("REINICIANDO PROGRAMA...")
+            self.registrar_log("RESTARTING PROGRAM...")
             global coordinator_running, restart_requested
             restart_requested = True
             coordinator_running = False
@@ -987,19 +987,19 @@ class AppIndustrial:
                 # If red just turned on, initialize buzzer timer
                 if not red_was_active:
                     self.last_buzzer_time = now - 10.0
-                    print(f"[BUZZER] Rojo activado, buzzer inicializado")
+                    print(f"[BUZZER] Red activated, buzzer initialized")
                 # Trigger buzzer every 10 seconds
                 if not self.buzzer_active and (now - self.last_buzzer_time) >= 10.0:
                     set_relay(PIN_BUZZER, True)
                     self.buzzer_active = True
                     self.buzzer_off_time = now + 1.0
                     self.last_buzzer_time = now
-                    print(f"[BUZZER] ON a los {now - self.last_buzzer_time:.1f}s")
+                    print(f"[BUZZER] ON after {now - self.last_buzzer_time:.1f}s")
                 # Turn off buzzer after 1 second
                 if self.buzzer_active and now >= self.buzzer_off_time:
                     set_relay(PIN_BUZZER, False)
                     self.buzzer_active = False
-                    print(f"[BUZZER] OFF después de 1s")
+                    print(f"[BUZZER] OFF after 1s")
             else:
                 # Red is not active, make sure buzzer is off
                 if self.buzzer_active:
@@ -1022,12 +1022,12 @@ class AppIndustrial:
             self.buzzer_active = True
             self.buzzer_off_time = now + 1.0
             self.last_buzzer_time = now
-            print(f"[BUZZER] Sonido ON")
+            print(f"[BUZZER] Sound ON")
         # Turn off buzzer after 1 second
         if self.buzzer_active and now >= self.buzzer_off_time:
             set_relay(PIN_BUZZER, False)
             self.buzzer_active = False
-            print(f"[BUZZER] Sonido OFF")
+            print(f"[BUZZER] Sound OFF")
 
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
@@ -1116,7 +1116,7 @@ class AppIndustrial:
         self.actualizar_buzzer()
 
         if confirmed_sensor_failure_detected or communication_failure_detected:
-            self.activar_alerta("FALLA SISTEMA")
+            self.activar_alerta("SYSTEM FAULT")
         else:
             self.limpiar_alerta()
         
@@ -1125,7 +1125,7 @@ class AppIndustrial:
 
     def mostrar_imagen_layout(self):
         if not self.img_layout_full:
-            messagebox.showwarning("Error", "No se encontró el mapa WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
+            messagebox.showwarning("Error", "Map image not found: WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
             return
         
         # Create a new window for the map
@@ -1209,8 +1209,8 @@ class AppIndustrial:
     def reset(self):
         """Re-enable sound"""
         self.sonido_habil = True
-        print("[SONIDO] Sonido re-habilitado")
-        self.registrar_log("Sonido re-habilitado")
+        print("[SOUND] Sound re-enabled")
+        self.registrar_log("Sound re-enabled")
 
     def registrar_log(self, info):
         try:
