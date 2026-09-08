@@ -992,7 +992,7 @@ class AppIndustrial:
         # --- SCANNING STATUS ---
         self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
         self.status_frame.pack(fill="x", padx=10, pady=2)
-        self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: W-0", font=("Arial", 8, "bold"), 
+        self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: Node-0", font=("Arial", 8, "bold"), 
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
         self.lbl_fault_legend = tk.Label(self.status_frame, text="Status: ALL OK", font=("Arial", 8, "bold"),
@@ -1107,7 +1107,7 @@ class AppIndustrial:
             frame.page_num = (device_id - 1) // NODES_PER_PAGE
             self.frames_robot.append(frame)
 
-            tk.Label(frame, text=f"W-{device_id}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
+            tk.Label(frame, text=f"Node-{device_id}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
 
             model_label = tk.Label(frame, text=get_node_model(device_id), font=("Arial", 6, "bold"), bg="#3a2a7a", fg="#9ed8ff")
             model_label.pack()
@@ -1210,10 +1210,14 @@ class AppIndustrial:
                 row = tk.Frame(rows_frame, bg="#2a2a3a", pady=4)
                 row.pack(fill="x", pady=2)
 
-                tk.Label(row, text=f"W-{device_id}", width=6, anchor="w", font=("Arial", 9, "bold"), bg="#2a2a3a", fg="white").pack(side="left", padx=6)
+                tk.Label(row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 9, "bold"), bg="#2a2a3a", fg="white").pack(side="left", padx=6)
 
                 option = tk.OptionMenu(row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
-                option.config(width=10, bg="#ffc72c", fg="black", highlightthickness=0)
+                option.config(width=18, bg="#ffc72c", fg="black", highlightthickness=0,
+                              activebackground="#e6b422", activeforeground="black",
+                              anchor="w", relief="raised", bd=2)
+                option["menu"].config(bg="white", fg="black", activebackground="#ffc72c",
+                                       activeforeground="black", bd=0)
                 option.pack(side="left", padx=4)
 
                 tk.Checkbutton(row,
@@ -1333,7 +1337,7 @@ class AppIndustrial:
         # Update page label
         start_device = self.current_page * NODES_PER_PAGE + 1
         end_device = min((self.current_page + 1) * NODES_PER_PAGE, get_configured_node_count())
-        self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (W-{start_device} to W-{end_device})")
+        self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (Node-{start_device} to Node-{end_device})")
     
     def actualizar_estado_escaneo(self):
         """Update scanning device status"""
@@ -1342,9 +1346,9 @@ class AppIndustrial:
             with device_data_lock:
                 device_id = current_scanning_device
             if device_id > 0:
-                self.lbl_scanning.config(text=f"Scanning: W-{device_id}")
+                self.lbl_scanning.config(text=f"Scanning: Node-{device_id}")
             else:
-                self.lbl_scanning.config(text="Scanning: W-0")
+                self.lbl_scanning.config(text="Scanning: Node-0")
         except:
             pass
 
@@ -1589,10 +1593,10 @@ class AppIndustrial:
         failing_nodes = sorted(set(failing_nodes))
         warning_nodes = sorted(set(node_id for node_id in warning_nodes if node_id not in failing_nodes))
         if failing_nodes:
-            legend_text = "Faulted nodes: " + ", ".join([f"W-{device_id}" for device_id in failing_nodes])
+            legend_text = "Faulted nodes: " + ", ".join([f"Node-{device_id}" for device_id in failing_nodes])
             self.lbl_fault_legend.config(text=legend_text, fg="#ff8a80")
         elif warning_nodes:
-            legend_text = "Warning nodes: " + ", ".join([f"W-{device_id}" for device_id in warning_nodes])
+            legend_text = "Warning nodes: " + ", ".join([f"Node-{device_id}" for device_id in warning_nodes])
             self.lbl_fault_legend.config(text=legend_text, fg="#ffd166")
         else:
             self.lbl_fault_legend.config(text="Status: ALL OK", fg="#d9f99d")
@@ -1638,11 +1642,11 @@ class AppIndustrial:
 
         top = tk.Toplevel(self.root)
         self.detail_windows[device_id] = top
-        top.title(f"Current Status - W-{device_id}")
+        top.title(f"Current Status - Node-{device_id}")
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
 
-        tk.Label(top, text=f"W-{device_id} - {get_node_model(device_id)}",
+        tk.Label(top, text=f"Node-{device_id} - {get_node_model(device_id)}",
                  font=("Arial", 12, "bold"), bg="#1a1a1a", fg="#00ff00").pack(pady=10)
 
         if is_node_in_maintenance(device_id):
