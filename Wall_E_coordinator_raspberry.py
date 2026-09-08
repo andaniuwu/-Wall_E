@@ -38,6 +38,7 @@ import time
 import sys
 import os
 import subprocess
+import json
 from datetime import datetime
 import threading
 import tkinter as tk
@@ -155,8 +156,12 @@ MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before trigg
                                    # With QUERY_INTERVAL=5s, 3 failures = 15 seconds tolerance
 
 # DEMO MODE (for testing without real hardware)
-DEMO_MODE = True                   # Set to False for real hardware testing with ESP32
+DEMO_MODE = False                  # Set to False for real hardware testing with ESP32
 DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
+
+# Persistent node configuration
+CONFIG_FILE = "walle_system_config.json"
+NODE_MODEL_OPTIONS = ["Model A", "Model B", "Model C"]
 
 # ============================================================================
 # GLOBAL STATE
@@ -167,6 +172,8 @@ last_response = {}                 # Track last response from each device
 device_stats = {}                  # Statistics for each device
 device_consecutive_failures = {}   # Track consecutive failures per device for alarm tolerance
 device_consecutive_sensor_errors = {}  # Track consecutive sensor-error reads per device
+system_config = {}
+config_lock = threading.Lock()
 
 # Shared data structure for HMI (thread-safe)
 device_data_lock = threading.Lock()
@@ -175,6 +182,144 @@ current_scanning_device = 0        # Currently scanning device ID (for HMI displ
 coordinator_running = False        # Flag to control coordinator thread
 coordinator_thread = None          # Reference to coordinator thread
 restart_requested = False          # Request flag to relaunch app after clean shutdown
+
+
+def create_default_node_entry(device_id):
+    return {
+        'device_id': device_id,
+        'model': NODE_MODEL_OPTIONS[0],
+        'maintenance': False,
+    }
+
+
+def build_default_system_config(node_count=NUM_DEVICES, setup_completed=False):
+    try:
+        normalized_count = int(node_count)
+    except (TypeError, ValueError):
+        normalized_count = NUM_DEVICES
+    normalized_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, normalized_count))
+    return {
+        'setup_completed': setup_completed,
+        'node_count': normalized_count,
+        'nodes': [create_default_node_entry(device_id) for device_id in range(1, MAX_DEVICE_ID + 1)]
+    }
+
+
+def normalize_system_config(raw_config):
+    default_config = build_default_system_config()
+    if not isinstance(raw_config, dict):
+        return default_config
+
+    try:
+        node_count = int(raw_config.get('node_count', NUM_DEVICES))
+    except (TypeError, ValueError):
+        node_count = NUM_DEVICES
+    node_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, node_count))
+
+    raw_nodes = raw_config.get('nodes', [])
+    normalized_nodes = []
+    for device_id in range(1, MAX_DEVICE_ID + 1):
+        raw_node = raw_nodes[device_id - 1] if isinstance(raw_nodes, list) and len(raw_nodes) >= device_id else {}
+        if not isinstance(raw_node, dict):
+            raw_node = {}
+        model = raw_node.get('model', NODE_MODEL_OPTIONS[0])
+        if model not in NODE_MODEL_OPTIONS:
+            model = NODE_MODEL_OPTIONS[0]
+        normalized_nodes.append({
+            'device_id': device_id,
+            'model': model,
+            'maintenance': bool(raw_node.get('maintenance', False)),
+        })
+
+    return {
+        'setup_completed': bool(raw_config.get('setup_completed', False)),
+        'node_count': node_count,
+        'nodes': normalized_nodes,
+    }
+
+
+def save_system_config(config=None):
+    global system_config
+
+    config_to_save = normalize_system_config(system_config if config is None else config)
+    with config_lock:
+        system_config = config_to_save
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as config_file:
+            json.dump(system_config, config_file, indent=2)
+    return config_to_save
+
+
+def load_system_config(force_reset=False):
+    global system_config
+
+    if force_reset:
+        return save_system_config(build_default_system_config(setup_completed=False))
+
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file:
+            loaded_config = json.load(config_file)
+        normalized_config = normalize_system_config(loaded_config)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        normalized_config = build_default_system_config(setup_completed=False)
+
+    return save_system_config(normalized_config)
+
+
+def get_system_config():
+    with config_lock:
+        cached_config = normalize_system_config(system_config) if system_config else None
+    if cached_config is not None:
+        return cached_config
+    return load_system_config()
+
+
+def get_configured_node_count():
+    return get_system_config().get('node_count', NUM_DEVICES)
+
+
+def get_node_config(device_id):
+    config = get_system_config()
+    if 1 <= device_id <= len(config['nodes']):
+        return dict(config['nodes'][device_id - 1])
+    return create_default_node_entry(device_id)
+
+
+def get_node_model(device_id):
+    return get_node_config(device_id).get('model', NODE_MODEL_OPTIONS[0])
+
+
+def is_node_in_maintenance(device_id):
+    return bool(get_node_config(device_id).get('maintenance', False))
+
+
+def get_active_device_ids():
+    config = get_system_config()
+    active_ids = []
+    for device_id in range(1, config['node_count'] + 1):
+        if not config['nodes'][device_id - 1].get('maintenance', False):
+            active_ids.append(device_id)
+    return active_ids
+
+
+def clear_runtime_state_for_node(device_id):
+    global current_scanning_device
+
+    with device_data_lock:
+        shared_device_data.pop(device_id, None)
+        if current_scanning_device == device_id:
+            current_scanning_device = 0
+    device_consecutive_failures.pop(device_id, None)
+    device_consecutive_sensor_errors.pop(device_id, None)
+    device_stats.pop(device_id, None)
+
+
+def synchronize_runtime_state():
+    configured_count = get_configured_node_count()
+    active_ids = set(get_active_device_ids())
+
+    for device_id in range(1, MAX_DEVICE_ID + 1):
+        if device_id > configured_count or device_id not in active_ids:
+            clear_runtime_state_for_node(device_id)
 
 # ============================================================================
 # SPI COMMUNICATION FUNCTIONS
@@ -509,6 +654,11 @@ def has_sensor_error(response):
 def query_device(device_id):
     """Query single device and collect response"""
     global current_scanning_device, device_data_lock, device_consecutive_failures, device_consecutive_sensor_errors
+
+    if is_node_in_maintenance(device_id):
+        clear_runtime_state_for_node(device_id)
+        print(f"\n  [Device {device_id}] MAINTENANCE MODE")
+        return None
     
     # Update shared variable so HMI knows which device we're scanning
     with device_data_lock:
@@ -611,7 +761,8 @@ def query_all_devices():
         print(f"[WARNING] Error during LoRa reset: {e}")
     
     responses = {}
-    for device_id in range(1, NUM_DEVICES + 1):
+    synchronize_runtime_state()
+    for device_id in get_active_device_ids():
         response = query_device(device_id)
         if response:
             responses[device_id] = response
@@ -669,8 +820,10 @@ def demo_loop():
             print(f"Demo Cycle #{cycle_count}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"{'='*70}")
             
-            # Generate and update simulated data for all devices
-            for device_id in range(1, NUM_DEVICES + 1):
+            synchronize_runtime_state()
+
+            # Generate and update simulated data for all active devices
+            for device_id in get_active_device_ids():
                 response = generate_demo_data(device_id)
                 
                 # Update shared data structure (thread-safe)
@@ -688,7 +841,7 @@ def demo_loop():
             
             # Print summary
             print(f"\nDemo Summary:")
-            print(f"  - Total devices simulated: {NUM_DEVICES}")
+            print(f"  - Total active devices simulated: {len(get_active_device_ids())}")
             
             # Wait for next cycle
             print(f"\nWaiting {DEMO_UPDATE_INTERVAL} seconds for next cycle...")
@@ -721,6 +874,12 @@ class AppIndustrial:
         self.buzzer_active = False
         self.buzzer_off_time = 0.0
         self.test_mode = False
+        self.leds_v = []
+        self.lbls_v_val = []
+        self.frames_robot = []
+        self.uv_lamps = []
+        self.model_labels = []
+        self.mode_labels = []
 
         # --- HEADER (Logos, Title, Clock) ---
         self.header = tk.Frame(self.root, bg="#483698")
@@ -765,9 +924,16 @@ class AppIndustrial:
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
 
+        self.ensure_configuration_ready()
+        if not self.root.winfo_exists():
+            self.initialization_aborted = True
+            return
+
+        self.initialization_aborted = False
+
         # --- PAGINATION ---
         self.current_page = 0
-        self.total_pages = (NUM_DEVICES + NODES_PER_PAGE - 1) // NODES_PER_PAGE
+        self.total_pages = 1
         
         self.page_frame = tk.Frame(self.root, bg="#483698")
         self.page_frame.pack(fill="x", padx=5, pady=2)
@@ -785,60 +951,12 @@ class AppIndustrial:
         # --- PANEL DE ROBOTS ---
         self.container = tk.Frame(self.root, bg="#483698")
         self.container.pack(expand=True, fill="both", padx=2, pady=1)
-        
-        self.leds_v, self.lbls_v_val, self.frames_robot = [], [], []
-        self.uv_lamps = []  # per-node list of 2 active current indicators (CH1, CH2)
-
-        for i in range(NUM_DEVICES):
-            # Creamos una "tarjeta" para cada robot
-            f = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
-            # Calcular posición dentro de la página
-            pos_in_page = i % NODES_PER_PAGE
-            row = pos_in_page // HMI_GRID_COLUMNS
-            col = pos_in_page % HMI_GRID_COLUMNS
-            f.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
-            # Guardar posición y página para navegación
-            f.device_id = i + 1
-            f.page_num = i // NODES_PER_PAGE
-            self.frames_robot.append(f)
-
-            tk.Label(f, text=f"W-{i+1}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
-            
-            # LED Alimentación
-            cv = tk.Canvas(f, width=35, height=35, bg="#3a2a7a", highlightthickness=0)
-            cv.pack(pady=0)
-            circ_v = cv.create_oval(6, 6, 29, 29, fill="#555555", outline="white")
-            self.leds_v.append((cv, circ_v))
-            
-            lv = tk.Label(f, text="--- V", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
-            lv.pack()
-            self.lbls_v_val.append(lv)
-
-            # Indicadores de corriente activos (2 focos: CH1 y CH2)
-            lamps_frame = tk.Frame(f, bg="#3a2a7a")
-            lamps_frame.pack(pady=0)
-            lamp_widgets = []
-            for lamp_idx in range(2):
-                lamp_canvas = tk.Canvas(lamps_frame, width=14, height=14, bg="#3a2a7a", highlightthickness=0)
-                lamp_canvas.grid(row=0, column=lamp_idx, padx=1)
-                lamp_circle = lamp_canvas.create_oval(2, 2, 12, 12, fill="#555555", outline="white")
-                lamp_widgets.append((lamp_canvas, lamp_circle))
-            self.uv_lamps.append(lamp_widgets)
-
-            # Botón DETALLE para ver lámparas individuales
-            tk.Button(f, text="VIEW", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
-                     command=lambda device_id=i+1: self.mostrar_detalle_lamparas(device_id),
-                     height=1, padx=2).pack(fill="x", pady=2)
-
-            # Click para ver detalle por nodo
-            f.bind("<Button-1>", lambda e, node_id=i+1: self.mostrar_detalle_lamparas(node_id))
 
         # Configurar columnas iguales
         for j in range(HMI_GRID_COLUMNS):
             self.container.grid_columnconfigure(j, weight=1)
-        
-        # Mostrar solo la primera página
-        self.refresh_page()
+
+        self.rebuild_node_grid()
 
         # --- BOTONERA INFERIOR ---
         self.f_btn = tk.Frame(self.root, bg="#483698")
@@ -850,13 +968,14 @@ class AppIndustrial:
         tk.Button(self.f_btn, text="SOUND ON", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
         tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
         tk.Button(self.f_btn, text="MAP", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="SETTINGS", command=self.open_settings_dialog, **b_style).grid(row=0, column=4, sticky="we", padx=2)
         # tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
         # tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
         
         # Admin buttons
         admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
-        tk.Button(self.f_btn, text="RESTART PROGRAM", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=4, sticky="we", padx=2, pady=2)
-        self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
+        tk.Button(self.f_btn, text="RESTART PROGRAM", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=5, sticky="we", padx=2, pady=2)
+        self.f_btn.grid_columnconfigure((0,1,2,3,4), weight=1)
 
         # Carga imagen para el Mapa
         try:
@@ -881,6 +1000,207 @@ class AppIndustrial:
 
         # Start periodic update of device status from shared data
         self.actualizar_datos_dispositivos()
+
+    def ensure_configuration_ready(self):
+        if not get_system_config().get('setup_completed', False):
+            if not self.show_configuration_dialog(first_run=True):
+                save_system_config(get_system_config())
+                self.registrar_log("Initial setup skipped; using current configuration")
+
+    def rebuild_node_grid(self):
+        configured_count = get_configured_node_count()
+        self.total_pages = max(1, (configured_count + NODES_PER_PAGE - 1) // NODES_PER_PAGE)
+        self.current_page = min(self.current_page, self.total_pages - 1)
+
+        for widget in self.container.winfo_children():
+            widget.destroy()
+
+        self.leds_v = []
+        self.lbls_v_val = []
+        self.frames_robot = []
+        self.uv_lamps = []
+        self.model_labels = []
+        self.mode_labels = []
+
+        for device_id in range(1, configured_count + 1):
+            frame = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
+            pos_in_page = (device_id - 1) % NODES_PER_PAGE
+            row = pos_in_page // HMI_GRID_COLUMNS
+            col = pos_in_page % HMI_GRID_COLUMNS
+            frame.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+            frame.device_id = device_id
+            frame.page_num = (device_id - 1) // NODES_PER_PAGE
+            self.frames_robot.append(frame)
+
+            tk.Label(frame, text=f"W-{device_id}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
+
+            model_label = tk.Label(frame, text=get_node_model(device_id), font=("Arial", 6, "bold"), bg="#3a2a7a", fg="#9ed8ff")
+            model_label.pack()
+            self.model_labels.append(model_label)
+
+            mode_text = "MAINTENANCE" if is_node_in_maintenance(device_id) else "OPERATING"
+            mode_color = "#ffb347" if is_node_in_maintenance(device_id) else "#d9f99d"
+            mode_label = tk.Label(frame, text=mode_text, font=("Arial", 6, "bold"), bg="#3a2a7a", fg=mode_color)
+            mode_label.pack()
+            self.mode_labels.append(mode_label)
+
+            cv = tk.Canvas(frame, width=35, height=35, bg="#3a2a7a", highlightthickness=0)
+            cv.pack(pady=0)
+            circ_v = cv.create_oval(6, 6, 29, 29, fill="#555555", outline="white")
+            self.leds_v.append((cv, circ_v))
+
+            voltage_label = tk.Label(frame, text="--- V", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
+            voltage_label.pack()
+            self.lbls_v_val.append(voltage_label)
+
+            lamps_frame = tk.Frame(frame, bg="#3a2a7a")
+            lamps_frame.pack(pady=0)
+            lamp_widgets = []
+            for lamp_idx in range(2):
+                lamp_canvas = tk.Canvas(lamps_frame, width=14, height=14, bg="#3a2a7a", highlightthickness=0)
+                lamp_canvas.grid(row=0, column=lamp_idx, padx=1)
+                lamp_circle = lamp_canvas.create_oval(2, 2, 12, 12, fill="#555555", outline="white")
+                lamp_widgets.append((lamp_canvas, lamp_circle))
+            self.uv_lamps.append(lamp_widgets)
+
+            tk.Button(frame, text="VIEW", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
+                     command=lambda node_id=device_id: self.mostrar_detalle_lamparas(node_id),
+                     height=1, padx=2).pack(fill="x", pady=2)
+            frame.bind("<Button-1>", lambda e, node_id=device_id: self.mostrar_detalle_lamparas(node_id))
+
+        self.refresh_page()
+
+    def apply_system_configuration(self, new_config):
+        save_system_config(new_config)
+        synchronize_runtime_state()
+        self.rebuild_node_grid()
+
+    def show_configuration_dialog(self, first_run=False):
+        current_config = get_system_config()
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Initial Node Setup" if first_run else "System Settings")
+        dialog.geometry("460x680")
+        dialog.configure(bg="#1f1f2e")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        tk.Label(dialog,
+                 text="Configure Nodes" if first_run else "Node Settings",
+                 font=("Arial", 14, "bold"), bg="#1f1f2e", fg="white").pack(pady=(12, 4))
+        tk.Label(dialog,
+                 text="Select how many nodes are installed and assign a model to each one.",
+                 font=("Arial", 9), bg="#1f1f2e", fg="#d1d5db").pack(pady=(0, 10))
+
+        top_frame = tk.Frame(dialog, bg="#1f1f2e")
+        top_frame.pack(fill="x", padx=12)
+        tk.Label(top_frame, text="Number of Nodes", font=("Arial", 10, "bold"), bg="#1f1f2e", fg="white").pack(side="left")
+
+        node_count_var = tk.IntVar(value=current_config.get('node_count', NUM_DEVICES))
+        node_count_spinbox = tk.Spinbox(top_frame, from_=1, to=MAX_DEVICE_ID, width=6, textvariable=node_count_var)
+        node_count_spinbox.pack(side="right")
+
+        list_frame = tk.Frame(dialog, bg="#1f1f2e")
+        list_frame.pack(expand=True, fill="both", padx=12, pady=10)
+
+        canvas = tk.Canvas(list_frame, bg="#1f1f2e", highlightthickness=0)
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        rows_frame = tk.Frame(canvas, bg="#1f1f2e")
+        rows_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=rows_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", expand=True, fill="both")
+        scrollbar.pack(side="right", fill="y")
+
+        row_vars = {}
+        dialog_state = {'saved': False}
+
+        def build_rows(*_args):
+            try:
+                requested_count = int(node_count_var.get())
+            except (TypeError, ValueError):
+                requested_count = current_config.get('node_count', NUM_DEVICES)
+            requested_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, requested_count))
+
+            for widget in rows_frame.winfo_children():
+                widget.destroy()
+
+            for device_id in range(1, requested_count + 1):
+                existing_node = current_config['nodes'][device_id - 1]
+                if device_id not in row_vars:
+                    row_vars[device_id] = {
+                        'model': tk.StringVar(value=existing_node.get('model', NODE_MODEL_OPTIONS[0])),
+                        'maintenance': tk.BooleanVar(value=existing_node.get('maintenance', False)),
+                    }
+
+                row = tk.Frame(rows_frame, bg="#2a2a3a", pady=4)
+                row.pack(fill="x", pady=2)
+
+                tk.Label(row, text=f"W-{device_id}", width=6, anchor="w", font=("Arial", 9, "bold"), bg="#2a2a3a", fg="white").pack(side="left", padx=6)
+
+                option = tk.OptionMenu(row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
+                option.config(width=10, bg="#ffc72c", fg="black", highlightthickness=0)
+                option.pack(side="left", padx=4)
+
+                tk.Checkbutton(row,
+                               text="Maintenance mode",
+                               variable=row_vars[device_id]['maintenance'],
+                               bg="#2a2a3a", fg="#ffcc80", selectcolor="#2a2a3a",
+                               activebackground="#2a2a3a", activeforeground="#ffcc80").pack(side="right", padx=8)
+
+        def save_dialog():
+            try:
+                requested_count = int(node_count_var.get())
+            except (TypeError, ValueError):
+                messagebox.showerror("Invalid Value", "Node count must be a whole number.", parent=dialog)
+                return
+
+            requested_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, requested_count))
+            new_config = normalize_system_config(current_config)
+            new_config['setup_completed'] = True
+            new_config['node_count'] = requested_count
+            for device_id in range(1, requested_count + 1):
+                new_config['nodes'][device_id - 1]['model'] = row_vars[device_id]['model'].get()
+                new_config['nodes'][device_id - 1]['maintenance'] = bool(row_vars[device_id]['maintenance'].get())
+
+            self.apply_system_configuration(new_config)
+            dialog_state['saved'] = True
+            dialog.destroy()
+
+        def reset_configuration():
+            if not messagebox.askyesno("Reset Configuration",
+                                       "This will clear the saved node setup and reopen the setup wizard. Continue?",
+                                       parent=dialog):
+                return
+            load_system_config(force_reset=True)
+            dialog.destroy()
+            self.show_configuration_dialog(first_run=True)
+
+        def on_close():
+            if first_run and not dialog_state['saved']:
+                if messagebox.askyesno("Skip Setup", "Skip initial setup and continue with the current configuration?", parent=dialog):
+                    dialog.destroy()
+                return
+            dialog.destroy()
+
+        node_count_var.trace_add('write', build_rows)
+        build_rows()
+
+        button_frame = tk.Frame(dialog, bg="#1f1f2e")
+        button_frame.pack(fill="x", padx=12, pady=(4, 12))
+        if not first_run:
+            tk.Button(button_frame, text="RESET CONFIGURATION", command=reset_configuration,
+                     bg="#b91c1c", fg="white", font=("Arial", 9, "bold")).pack(side="left")
+        tk.Button(button_frame, text="CANCEL", command=on_close,
+                 bg="#6b7280", fg="white", font=("Arial", 9, "bold")).pack(side="right", padx=4)
+        tk.Button(button_frame, text="SAVE", command=save_dialog,
+                 bg="#16a34a", fg="white", font=("Arial", 9, "bold")).pack(side="right", padx=4)
+
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+        self.root.wait_window(dialog)
+        return dialog_state['saved']
+
+    def open_settings_dialog(self):
+        self.show_configuration_dialog(first_run=False)
 
     # =======================================================
     # MÉTODOS DE LÓGICA Y CONTROL
@@ -912,7 +1232,7 @@ class AppIndustrial:
         
         # Update page label
         start_device = self.current_page * NODES_PER_PAGE + 1
-        end_device = min((self.current_page + 1) * NODES_PER_PAGE, NUM_DEVICES)
+        end_device = min((self.current_page + 1) * NODES_PER_PAGE, get_configured_node_count())
         self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (W-{start_device} to W-{end_device})")
     
     def actualizar_estado_escaneo(self):
@@ -1040,8 +1360,21 @@ class AppIndustrial:
 
         try:
             with device_data_lock:
-                for device_id in range(1, NUM_DEVICES + 1):
+                configured_count = get_configured_node_count()
+                for device_id in range(1, configured_count + 1):
                     idx = device_id - 1
+                    node_config = get_node_config(device_id)
+
+                    self.model_labels[idx].config(text=node_config['model'])
+                    if node_config['maintenance']:
+                        self.mode_labels[idx].config(text="MAINTENANCE", fg="#ffb347")
+                        self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#6b7280")
+                        for lamp_i in range(2):
+                            self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#6b7280")
+                        self.lbls_v_val[idx].config(text="MAINT", fg="#ffb347")
+                        continue
+                    else:
+                        self.mode_labels[idx].config(text="OPERATING", fg="#d9f99d")
                     
                     if device_id in shared_device_data:
                         data = shared_device_data[device_id]
@@ -1159,8 +1492,12 @@ class AppIndustrial:
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
 
-        tk.Label(top, text=f"W-{device_id} - Active Channels (CH1 & CH2)",
+        tk.Label(top, text=f"W-{device_id} - {get_node_model(device_id)}",
                  font=("Arial", 12, "bold"), bg="#1a1a1a", fg="#00ff00").pack(pady=10)
+
+        if is_node_in_maintenance(device_id):
+            tk.Label(top, text="Node is in maintenance mode. Alerts are disabled.",
+                     bg="#1a1a1a", fg="#ffb347", font=("Arial", 10, "bold")).pack(pady=(0, 8))
 
         frame = tk.Frame(top, bg="#1a1a1a")
         frame.pack(expand=True, fill="both", padx=10, pady=10)
@@ -1312,9 +1649,11 @@ def coordinator_loop():
                     
                 except Exception as e:
                     print(f"[WARNING] Error during hard reset: {e}")
+
+                synchronize_runtime_state()
                 
                 # Query all devices
-                for device_id in range(1, NUM_DEVICES + 1):
+                for device_id in get_active_device_ids():
                     response = query_device(device_id)
                     
                     # Update shared data structure (thread-safe)
@@ -1331,7 +1670,7 @@ def coordinator_loop():
                 
                 # Print device statistics
                 print(f"\nDevice Statistics:")
-                for device_id in range(1, NUM_DEVICES + 1):
+                for device_id in range(1, get_configured_node_count() + 1):
                     if device_id in device_stats:
                         stats = device_stats[device_id]
                         success_rate = (stats['responses'] * 100) / (stats['responses'] + stats['failures']) if (stats['responses'] + stats['failures']) > 0 else 0
@@ -1356,8 +1695,12 @@ def main():
     """Main entry point - initializes hardware and launches HMI + coordinator"""
     global coordinator_running, coordinator_thread, restart_requested
 
-    if not (MIN_DEVICE_ID <= NUM_DEVICES <= MAX_DEVICE_ID):
-        print(f"✗ Invalid NUM_DEVICES={NUM_DEVICES}. Valid range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
+    load_system_config()
+
+    configured_count = get_configured_node_count()
+
+    if not (MIN_DEVICE_ID <= configured_count <= MAX_DEVICE_ID):
+        print(f"✗ Invalid node count={configured_count}. Valid range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
         return 1
     
     print("="*70)
@@ -1367,7 +1710,7 @@ def main():
         print("          Wall-E Coordinator with HMI - Starting Up")
     print("="*70)
     print(f"Configuration:")
-    print(f"  - Number of devices: {NUM_DEVICES}")
+    print(f"  - Number of devices: {configured_count}")
     print(f"  - Supported ID range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
     if DEMO_MODE:
         print(f"  - Demo update interval: {DEMO_UPDATE_INTERVAL} seconds")
@@ -1390,16 +1733,19 @@ def main():
         print("✓ Demo mode enabled - using simulated data")
     
     print("\n✓ System ready. Starting coordinator and HMI...")
-    
-    # Start coordinator thread
-    coordinator_running = True
-    coordinator_thread = threading.Thread(target=coordinator_loop, daemon=True)
-    coordinator_thread.start()
-    
+
     # Launch HMI (runs in main thread)
     try:
         root = tk.Tk()
         app = AppIndustrial(root)
+
+        if not root.winfo_exists() or getattr(app, 'initialization_aborted', False):
+            print("⚠ HMI closed during initial setup")
+            return 0
+
+        coordinator_running = True
+        coordinator_thread = threading.Thread(target=coordinator_loop, daemon=True)
+        coordinator_thread.start()
         
         print("\n✓ HMI launched. Coordinator running in background.")
         if DEMO_MODE:
