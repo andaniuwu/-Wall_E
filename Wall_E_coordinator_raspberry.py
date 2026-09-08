@@ -136,19 +136,21 @@ REG_PAYLOAD_LENGTH = 0x22
 NUM_DEVICES = 50                   # Number of remote nodes to poll
 MIN_DEVICE_ID = 1                  # Protocol minimum device ID
 MAX_DEVICE_ID = 255                # 1 byte in packet supports IDs up to 255
-HMI_GRID_COLUMNS = 4               # Grid columns for node cards in HMI
-NODES_PER_PAGE = 20                # 4 cols x 5 rows per page
+HMI_GRID_COLUMNS = 3               # Grid columns for node cards in HMI
+NODES_PER_PAGE = 9                 # 3 cols x 3 rows per page
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
 RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
 
 # HMI THRESHOLDS
-VOLTAGE_MIN = 100.0                # Minimum acceptable voltage (V)
-VOLTAGE_MAX = 140.0                # Maximum acceptable voltage (V)
-VOLTAGE_SCALE_MAX = 130.0          # Telemetry scaling max (must match ESP32 packet scaling)
-CURRENT_MIN = 150.0                # Minimum acceptable current per lamp (mA) = 0.15A
+PRESSURE_OK_MIN = 11.0             # Minimum pressure considered OK (Pa)
+PRESSURE_ERROR_MIN = 5.0           # Below this pressure the node is in pressure error (Pa)
+PRESSURE_MARK_FILTER_DIRTY = 20.0  # MARK purifier filter cleaning threshold (Pa)
+PRESSURE_MOLDEX_FILTER_DIRTY = 30.0  # MOLDEX purifier filter cleaning threshold (Pa)
+PRESSURE_SCALE_MAX = 130.0         # Telemetry scaling max for pressure byte
+CURRENT_VISUAL_ON_THRESHOLD = 30.0  # Current above this value is shown as functionally active
+CURRENT_FAULT_THRESHOLD = 50.0      # Any lamp below this value triggers a system fault
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
-CURRENT_RED_THRESHOLD = 150.0      # <150mA = red fault
 
 # ALARM TOLERANCE CONFIGURATION
 MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before triggering alarm
@@ -161,7 +163,10 @@ DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 
 # Persistent node configuration
 CONFIG_FILE = "walle_system_config.json"
-NODE_MODEL_OPTIONS = ["Model A", "Model B", "Model C"]
+NODE_MODEL_PURIFIER_MARK = "Purifier MARK"
+NODE_MODEL_PURIFIER_MOLDEX = "Purifier MOLDEX"
+NODE_MODEL_UV_ONLY = "Only UV Lamps"
+NODE_MODEL_OPTIONS = [NODE_MODEL_PURIFIER_MARK, NODE_MODEL_PURIFIER_MOLDEX, NODE_MODEL_UV_ONLY]
 
 # ============================================================================
 # GLOBAL STATE
@@ -528,9 +533,9 @@ def send_request(device_id):
 # RECEPTION FUNCTIONS
 # ============================================================================
 
-def unscale_voltage(scaled_value):
-    """Convert 8-bit scaled value back to voltage (0-255 = 0-130V RMS)."""
-    return (scaled_value / 255.0) * VOLTAGE_SCALE_MAX
+def unscale_pressure(scaled_value):
+    """Convert 8-bit scaled value back to pressure using the configured scale."""
+    return (scaled_value / 255.0) * PRESSURE_SCALE_MAX
 
 def unscale_current(scaled_value):
     """Convert 8-bit scaled value back to current in mA (0-255 = 0-2550 mA)"""
@@ -600,7 +605,7 @@ def parse_response(packet, device_id):
     resp_id = packet[2]
     seq_lo = packet[3]
     seq_hi = packet[4]
-    ac_v_scaled = packet[5]
+    pressure_scaled = packet[5]
     curr1_scaled = packet[6]
     curr2_scaled = packet[7]
     curr3_scaled = packet[8]
@@ -616,7 +621,7 @@ def parse_response(packet, device_id):
     seq = (seq_hi << 8) | seq_lo
     
     # Unscale values to actual measurements
-    ac_voltage_V = unscale_voltage(ac_v_scaled)
+    pressure_value = unscale_pressure(pressure_scaled)
     curr1_mA = unscale_current(curr1_scaled)
     curr2_mA = unscale_current(curr2_scaled)
     curr3_mA = unscale_current(curr3_scaled)
@@ -625,7 +630,7 @@ def parse_response(packet, device_id):
     return {
         'device_id': resp_id,
         'seq': seq,
-        'ac_voltage_V': ac_voltage_V,
+        'pressure_value': pressure_value,
         'curr1_mA': curr1_mA,
         'curr2_mA': curr2_mA,
         'curr3_mA': curr3_mA,
@@ -636,16 +641,80 @@ def parse_response(packet, device_id):
 
 def has_sensor_error(response):
     """Return True when a node reading is in error according to direct thresholds."""
-    voltage = response.get('ac_voltage_V', 0.0)
+    pressure = response.get('pressure_value', 0.0)
+    device_id = response.get('device_id', 0)
     curr1 = response.get('curr1_mA', 0.0)
     curr3 = response.get('curr3_mA', 0.0)
 
-    voltage_error = voltage < VOLTAGE_MIN
+    pressure_status = evaluate_pressure_status(device_id, pressure)
     current_error = (
-        curr1 < CURRENT_RED_THRESHOLD or curr1 > CURRENT_MAX or
-        curr3 < CURRENT_RED_THRESHOLD or curr3 > CURRENT_MAX
+        curr1 < CURRENT_FAULT_THRESHOLD or curr1 > CURRENT_MAX or
+        curr3 < CURRENT_FAULT_THRESHOLD or curr3 > CURRENT_MAX
     )
-    return voltage_error or current_error
+    return pressure_status['fault'] or current_error
+
+
+def evaluate_pressure_status(device_id, pressure_value):
+    model = get_node_model(device_id)
+
+    if model == NODE_MODEL_UV_ONLY:
+        return {
+            'state': 'DISABLED',
+            'label': 'PRESSURE DISABLED',
+            'short_label': 'DISABLED',
+            'color': '#9ca3af',
+            'warning': False,
+            'fault': False,
+        }
+
+    if pressure_value < PRESSURE_ERROR_MIN:
+        return {
+            'state': 'ERROR',
+            'label': 'PRESSURE ERROR',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#e74c3c',
+            'warning': False,
+            'fault': True,
+        }
+
+    if pressure_value < PRESSURE_OK_MIN:
+        return {
+            'state': 'LOW',
+            'label': 'LOW PRESSURE',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#f59e0b',
+            'warning': False,
+            'fault': True,
+        }
+
+    if model == NODE_MODEL_PURIFIER_MARK and pressure_value > PRESSURE_MARK_FILTER_DIRTY:
+        return {
+            'state': 'FILTER',
+            'label': 'FILTER NEEDS CLEANING',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#f59e0b',
+            'warning': True,
+            'fault': False,
+        }
+
+    if model == NODE_MODEL_PURIFIER_MOLDEX and pressure_value > PRESSURE_MOLDEX_FILTER_DIRTY:
+        return {
+            'state': 'FILTER',
+            'label': 'FILTER NEEDS CLEANING',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#f59e0b',
+            'warning': True,
+            'fault': False,
+        }
+
+    return {
+        'state': 'OK',
+        'label': 'PRESSURE OK',
+        'short_label': f'{pressure_value:.1f} Pa',
+        'color': '#2ecc71',
+        'warning': False,
+        'fault': False,
+    }
 
 # ============================================================================
 # QUERY CYCLE
@@ -673,7 +742,7 @@ def query_device(device_id):
             if response_data:
                 response = parse_response(response_data, device_id)
                 if response:
-                    print(f"✓ AC={response['ac_voltage_V']:.1f}V " +
+                    print(f"✓ P={response['pressure_value']:.1f} " +
                           f"I1={response['curr1_mA']:.0f}mA " +
                           f"I2={response['curr2_mA']:.0f}mA " +
                           f"I3={response['curr3_mA']:.0f}mA " +
@@ -777,7 +846,7 @@ def query_all_devices():
 def generate_demo_data(device_id):
     """Generate simulated sensor data for testing without real hardware"""
     # Simulate realistic voltage variations (100-135V for real operation)
-    voltage = random.uniform(100.0, 135.0)
+    pressure = random.uniform(100.0, 135.0)
     
     # 70% chance of normal operation, 30% chance of fault
     if random.random() < 0.7:
@@ -789,7 +858,7 @@ def generate_demo_data(device_id):
     else:
         # Fault state - some lamps off
         if random.random() < 0.5:
-            voltage = random.uniform(8.0, 10.5)  # Low voltage fault
+            pressure = random.uniform(8.0, 10.5)  # Low pressure fault
         curr1 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
         curr2 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
         curr3 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
@@ -798,7 +867,7 @@ def generate_demo_data(device_id):
     return {
         'device_id': device_id,
         'seq': random.randint(0, 65535),
-        'ac_voltage_V': voltage,
+        'pressure_value': pressure,
         'curr1_mA': curr1,
         'curr2_mA': curr2,
         'curr3_mA': curr3,
@@ -831,7 +900,7 @@ def demo_loop():
                     shared_device_data[device_id] = response
                 
                 # Print simulated response
-                print(f"  [Device {device_id}] ✓ AC={response['ac_voltage_V']:.1f}V " +
+                    print(f"  [Device {device_id}] ✓ P={response['pressure_value']:.1f} " +
                       f"I1={response['curr1_mA']:.0f}mA " +
                       f"I2={response['curr2_mA']:.0f}mA " +
                       f"I3={response['curr3_mA']:.0f}mA " +
@@ -880,6 +949,9 @@ class AppIndustrial:
         self.uv_lamps = []
         self.model_labels = []
         self.mode_labels = []
+        self.map_window = None
+        self.logs_window = None
+        self.detail_windows = {}
 
         # --- HEADER (Logos, Title, Clock) ---
         self.header = tk.Frame(self.root, bg="#483698")
@@ -923,6 +995,9 @@ class AppIndustrial:
         self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: W-0", font=("Arial", 8, "bold"), 
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
+        self.lbl_fault_legend = tk.Label(self.status_frame, text="Status: ALL OK", font=("Arial", 8, "bold"),
+                         fg="#d9f99d", bg="#2a1a5a", wraplength=440, justify="center")
+        self.lbl_fault_legend.pack(pady=(2, 0))
 
         self.ensure_configuration_ready()
         if not self.root.winfo_exists():
@@ -1049,9 +1124,9 @@ class AppIndustrial:
             circ_v = cv.create_oval(6, 6, 29, 29, fill="#555555", outline="white")
             self.leds_v.append((cv, circ_v))
 
-            voltage_label = tk.Label(frame, text="--- V", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
-            voltage_label.pack()
-            self.lbls_v_val.append(voltage_label)
+            pressure_label = tk.Label(frame, text="--- Pa", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
+            pressure_label.pack()
+            self.lbls_v_val.append(pressure_label)
 
             lamps_frame = tk.Frame(frame, bg="#3a2a7a")
             lamps_frame.pack(pady=0)
@@ -1202,6 +1277,31 @@ class AppIndustrial:
     def open_settings_dialog(self):
         self.show_configuration_dialog(first_run=False)
 
+    def toggle_window(self, window_attr_name):
+        window = getattr(self, window_attr_name, None)
+        if window is not None and window.winfo_exists():
+            window.destroy()
+            setattr(self, window_attr_name, None)
+            return None
+        return "open"
+
+    def toggle_detail_window(self, device_id):
+        window = self.detail_windows.get(device_id)
+        if window is not None and window.winfo_exists():
+            window.destroy()
+            self.detail_windows.pop(device_id, None)
+            return None
+        return "open"
+
+    def register_window_close(self, window, cleanup_callback):
+        def on_close():
+            cleanup_callback()
+            if window.winfo_exists():
+                window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", on_close)
+        return on_close
+
     # =======================================================
     # MÉTODOS DE LÓGICA Y CONTROL
     # =======================================================
@@ -1267,24 +1367,26 @@ class AppIndustrial:
 
     def classify_current_status(self, current_mA):
         """Return (status_code, color, description) for active current indicators."""
-        if current_mA < CURRENT_RED_THRESHOLD:
-            return "RED", "#e74c3c", "Both lamps failed"
+        if current_mA < CURRENT_VISUAL_ON_THRESHOLD:
+            return "RED", "#e74c3c", "Lamp current missing"
+        if current_mA < CURRENT_FAULT_THRESHOLD:
+            return "YELLOW", "#f59e0b", "Low current warning"
         if current_mA <= CURRENT_MAX:
             return "GREEN", "#2ecc71", "Lamps working OK"
-        return "RED", "#e74c3c", "Both lamps failed"
+        return "RED", "#e74c3c", "Overcurrent fault"
 
-    def actualizar_torreta(self, confirmed_sensor_failure, communication_failure):
+    def actualizar_torreta(self, confirmed_sensor_failure, communication_failure, warning_detected):
         """
         Update physical tower light and buzzer based on system health
         
         Args:
             confirmed_sensor_failure: True if any node remains in sensor error >= MAX_CONSECUTIVE_FAILURES reads
             communication_failure: True if any device has >= MAX_CONSECUTIVE_FAILURES
+            warning_detected: True if any node has a warning state that should light the yellow tower
         """
         try:
-            # Yellow tower behavior intentionally disabled.
             red_active = communication_failure or confirmed_sensor_failure
-            yellow_active = False
+            yellow_active = warning_detected and not red_active
             green_active = (not red_active) and (not yellow_active)
 
             # Only update relays if state changed to reduce GPIO interference with SPI
@@ -1357,6 +1459,8 @@ class AppIndustrial:
 
         confirmed_sensor_failure_detected = False
         communication_failure_detected = False
+        failing_nodes = []
+        warning_nodes = []
 
         try:
             with device_data_lock:
@@ -1380,12 +1484,11 @@ class AppIndustrial:
                         data = shared_device_data[device_id]
                         
                         # Extract sensor values
-                        voltage = data.get('ac_voltage_V', 0)
+                        pressure = data.get('pressure_value', 0)
                         curr1 = data.get('curr1_mA', 0)
                         curr3 = data.get('curr3_mA', 0)
+                        pressure_status = evaluate_pressure_status(device_id, pressure)
                         
-                        # Direct error: voltage is only faulted when below minimum threshold.
-                        v_ok = voltage >= VOLTAGE_MIN
                         current_status = [
                             self.classify_current_status(curr1),
                             self.classify_current_status(curr3),
@@ -1402,15 +1505,36 @@ class AppIndustrial:
                             # In test mode, only Device 1 can trigger communication failure alarm
                             if not self.test_mode or device_id == 1:
                                 communication_failure_detected = True
+                                failing_nodes.append(device_id)
+                        if pressure_status['fault']:
+                            confirmed_sensor_failure_detected = True
+                            if device_id not in failing_nodes:
+                                failing_nodes.append(device_id)
+                        elif pressure_status['warning']:
+                            if device_id not in warning_nodes:
+                                warning_nodes.append(device_id)
+                        current_fault_detected = any(status_code == "RED" for status_code, _, _ in current_status)
+                        current_warning_detected = any(status_code == "YELLOW" for status_code, _, _ in current_status)
+                        if current_fault_detected:
+                            confirmed_sensor_failure_detected = True
+                            if device_id not in failing_nodes:
+                                failing_nodes.append(device_id)
+                        elif current_warning_detected:
+                            if device_id not in warning_nodes:
+                                warning_nodes.append(device_id)
+                        if (not self.test_mode or device_id == 1) and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                            if device_id not in failing_nodes:
+                                failing_nodes.append(device_id)
                         
                         # Update visual indicators
-                        color_v = "#2ecc71" if v_ok else "#e74c3c"
+                        color_v = pressure_status['color']
                         
                         self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill=color_v)
                         # Update active current indicators (CH1 and CH3)
                         for lamp_i, (_, lamp_color, _) in enumerate(current_status):
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
-                        self.lbls_v_val[idx].config(text=f"{voltage:.1f} V", fg="white" if v_ok else "#ff4444")
+                        label_color = "white" if pressure_status['state'] == 'OK' else pressure_status['color']
+                        self.lbls_v_val[idx].config(text=pressure_status['short_label'], fg=label_color)
 
                     else:
                         # No data available for this device - check consecutive failures
@@ -1425,26 +1549,33 @@ class AppIndustrial:
                             # Only trigger alarm if Device 1 has exceeded failure threshold
                             if device_id == 1 and consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
+                                failing_nodes.append(device_id)
                             if device_id == 1 and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
                                 confirmed_sensor_failure_detected = True
+                                if device_id not in failing_nodes:
+                                    failing_nodes.append(device_id)
                         else:
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
                             for lamp_i in range(2):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
-                            self.lbls_v_val[idx].config(text="--- V", fg="#ff4444")
+                            self.lbls_v_val[idx].config(text="--- Pa", fg="#ff4444")
                             # Only trigger alarm if exceeded failure threshold
                             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
+                                failing_nodes.append(device_id)
                             if device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
                                 confirmed_sensor_failure_detected = True
+                                if device_id not in failing_nodes:
+                                    failing_nodes.append(device_id)
         
         except Exception as e:
             print(f"HMI update error: {e}")
 
         # Update tower status based on system health (only if state changed)
-        current_state = (confirmed_sensor_failure_detected, communication_failure_detected)
+        warning_detected = len(warning_nodes) > 0
+        current_state = (confirmed_sensor_failure_detected, communication_failure_detected, warning_detected)
         if current_state != self.last_tower_state:
-            self.actualizar_torreta(confirmed_sensor_failure_detected, communication_failure_detected)
+            self.actualizar_torreta(confirmed_sensor_failure_detected, communication_failure_detected, warning_detected)
             self.last_tower_state = current_state
         
         # Update buzzer independently (called every 1 second)
@@ -1454,6 +1585,17 @@ class AppIndustrial:
             self.activar_alerta("SYSTEM FAULT")
         else:
             self.limpiar_alerta()
+
+        failing_nodes = sorted(set(failing_nodes))
+        warning_nodes = sorted(set(node_id for node_id in warning_nodes if node_id not in failing_nodes))
+        if failing_nodes:
+            legend_text = "Faulted nodes: " + ", ".join([f"W-{device_id}" for device_id in failing_nodes])
+            self.lbl_fault_legend.config(text=legend_text, fg="#ff8a80")
+        elif warning_nodes:
+            legend_text = "Warning nodes: " + ", ".join([f"W-{device_id}" for device_id in warning_nodes])
+            self.lbl_fault_legend.config(text=legend_text, fg="#ffd166")
+        else:
+            self.lbl_fault_legend.config(text="Status: ALL OK", fg="#d9f99d")
         
         # Schedule next update
         self.root.after(1000, self.actualizar_datos_dispositivos)
@@ -1462,9 +1604,12 @@ class AppIndustrial:
         if not self.img_layout_full:
             messagebox.showwarning("Error", "Map image not found: WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
             return
+        if self.toggle_window('map_window') is None:
+            return
         
         # Create a new window for the map
         top = tk.Toplevel(self.root)
+        self.map_window = top
         top.title("Plant Map - Wall-E")
         top.geometry("450x650")
         top.configure(bg="#222222")
@@ -1482,12 +1627,17 @@ class AppIndustrial:
         frame_btn = tk.Frame(top, bg="#222222")
         frame_btn.pack(side="bottom", fill="x", padx=10, pady=10)
         
-        tk.Button(frame_btn, text="CLOSE", command=top.destroy, bg="red", fg="white", 
+        close_map = self.register_window_close(top, lambda: setattr(self, 'map_window', None))
+        tk.Button(frame_btn, text="CLOSE", command=close_map, bg="red", fg="white", 
                  font=("Arial", 10, "bold"), width=20).pack(pady=5)
 
     def mostrar_detalle_lamparas(self, device_id):
         """Open a window showing per-lamp UV status for a device"""
+        if self.toggle_detail_window(device_id) is None:
+            return
+
         top = tk.Toplevel(self.root)
+        self.detail_windows[device_id] = top
         top.title(f"Current Status - W-{device_id}")
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
@@ -1499,6 +1649,9 @@ class AppIndustrial:
             tk.Label(top, text="Node is in maintenance mode. Alerts are disabled.",
                      bg="#1a1a1a", fg="#ffb347", font=("Arial", 10, "bold")).pack(pady=(0, 8))
 
+        pressure_status_text = "No pressure data available."
+        pressure_status_color = "#9ca3af"
+
         frame = tk.Frame(top, bg="#1a1a1a")
         frame.pack(expand=True, fill="both", padx=10, pady=10)
 
@@ -1508,6 +1661,17 @@ class AppIndustrial:
         if not data:
             tk.Label(frame, text="No data from node.", bg="#1a1a1a", fg="white").pack(pady=10)
         else:
+            pressure_status = evaluate_pressure_status(device_id, data.get('pressure_value', 0))
+            pressure_status_text = pressure_status['label']
+            pressure_status_color = pressure_status['color']
+
+            tk.Label(frame,
+                     text=f"Pressure: {pressure_status['short_label']}",
+                     font=("Arial", 10, "bold"), bg="#1a1a1a", fg="white").pack(pady=(0, 6))
+            tk.Label(frame,
+                     text=pressure_status_text,
+                     font=("Arial", 10, "bold"), bg="#1a1a1a", fg=pressure_status_color).pack(pady=(0, 8))
+
             currents = [
                 ("CH1 UV Lamps 1 & 2", data.get('curr1_mA', 0)),
                 ("CH2 UV Lamps 3 & 4", data.get('curr3_mA', 0)),
@@ -1527,7 +1691,8 @@ class AppIndustrial:
                          font=("Arial", 10), bg="#1a1a1a", fg="white").pack(side="left")
                 tk.Label(row, text=description, font=("Arial", 10, "bold"), bg="#1a1a1a", fg=color).pack(side="right")
 
-        tk.Button(top, text="CLOSE", command=top.destroy, bg="red", fg="white",
+        close_detail = self.register_window_close(top, lambda: self.detail_windows.pop(device_id, None))
+        tk.Button(top, text="CLOSE", command=close_detail, bg="red", fg="white",
                   font=("Arial", 10, "bold"), width=20).pack(pady=10)
 
     def activar_alerta(self, msg):
@@ -1559,8 +1724,12 @@ class AppIndustrial:
             print(f"Log write error: {e}")
 
     def abrir_historial(self):
+        if self.toggle_window('logs_window') is None:
+            return
+
         # Create a new window for logs
         pop = tk.Toplevel(self.root)
+        self.logs_window = pop
         pop.title("Event History - Wall-E")
         pop.geometry("350x450")
         pop.resizable(True, True)
@@ -1599,7 +1768,8 @@ class AppIndustrial:
         frame_btn = tk.Frame(pop, bg="#1a1a1a", height=50)
         frame_btn.pack(fill="x", padx=5, pady=5)
         
-        tk.Button(frame_btn, text="CLOSE", command=pop.destroy, bg="red", fg="white",
+        close_logs = self.register_window_close(pop, lambda: setattr(self, 'logs_window', None))
+        tk.Button(frame_btn, text="CLOSE", command=close_logs, bg="red", fg="white",
                  font=("Arial", 10, "bold"), width=20).pack(side="left", padx=5)
         tk.Button(frame_btn, text="CLEAR LOGS", command=self.limpiar_logs, bg="orange", fg="white",
                  font=("Arial", 10, "bold"), width=20).pack(side="left", padx=5)
