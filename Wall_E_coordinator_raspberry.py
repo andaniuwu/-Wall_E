@@ -3,20 +3,23 @@
 ================================================================================
                     Wall-E Coordinator - Raspberry Pi
               Request/Response LoRa Communication Handler
+              
+              Developed by: Andani Emmanuel Lopez Arechar
 ================================================================================
 
 This program runs on the Raspberry Pi 4 and acts as the central coordinator
 for the Wall-E monitoring system. It:
 
-1. Periodically queries each of the 9 remote ESP32 devices
+1. Periodically queries each configured remote ESP32 device
 2. Receives status responses from the devices
 3. Logs and displays the sensor data
 4. Alerts on status changes or communication failures
 
 PROTOCOL:
-  Request: [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
-  Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_mA | CURR2_mA | CURR3_mA | CURR4_mA]
-           where scaled values: 0-255 = voltage 0-130V RMS, current 0-2550 mA per channel
+    Request: [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
+    Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | PRESSURE_SCALED | CURR1 | CURR2 | CURR3 | CURR4]
+                     where scaled values: 0-255 = pressure 0-130 Pa, current 0-2550 mA per channel.
+                     The shared two-sensor firmware uses CURR1 and CURR3; CURR2 and CURR4 are zero.
 
 HARDWARE:
   - LoRa module: SX1278 on 433MHz
@@ -24,7 +27,7 @@ HARDWARE:
   - GPIO4=DIO0, GPIO17=DIO1, GPIO18=DIO2, GPIO27=DIO3, GPIO22=RST
 
 CONFIGURATION:
-  - NUM_DEVICES: Number of remote nodes (1-9)
+    - NUM_DEVICES: Number of remote nodes (1-255)
   - QUERY_INTERVAL: Seconds between polling cycles
   - RESPONSE_TIMEOUT: Seconds to wait for response from each device
   - FREQUENCY: LoRa frequency (433E6 for 433 MHz)
@@ -33,17 +36,27 @@ CONFIGURATION:
 """
 
 import time
-import RPi.GPIO as GPIO
-import spidev
 import sys
 import os
 import subprocess
+import json
 from datetime import datetime
 import threading
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
 import random
+
+# Try to import RPi-specific modules; gracefully skip in demo mode
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    GPIO = None
+
+try:
+    import spidev
+except ImportError:
+    spidev = None
 
 # ============================================================================
 # HARDWARE CONFIGURATION
@@ -70,6 +83,8 @@ RELAY_ACTIVE_LOW = True  # Set True if relay outputs are active-low
 
 def set_relay(pin, on):
     """Helper to drive relay outputs with optional active-low logic."""
+    if GPIO is None or DEMO_MODE:
+        return  # Skip GPIO operations in demo mode or when GPIO unavailable
     try:
         if RELAY_ACTIVE_LOW:
             GPIO.output(pin, GPIO.LOW if on else GPIO.HIGH)
@@ -119,19 +134,24 @@ REG_PAYLOAD_LENGTH = 0x22
 # SYSTEM CONFIGURATION
 # ============================================================================
 
-NUM_DEVICES = 9                    # Number of remote nodes (1-9)
+NUM_DEVICES = 50                   # Number of remote nodes to poll
+MIN_DEVICE_ID = 1                  # Protocol minimum device ID
+MAX_DEVICE_ID = 255                # 1 byte in packet supports IDs up to 255
+HMI_GRID_COLUMNS = 3               # Grid columns for node cards in HMI
+NODES_PER_PAGE = 9                 # 3 cols x 3 rows per page
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
 RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
 
 # HMI THRESHOLDS
-VOLTAGE_MIN = 100.0                # Minimum acceptable voltage (V)
-VOLTAGE_MAX = 140.0                # Maximum acceptable voltage (V)
-VOLTAGE_SCALE_MAX = 130.0          # Telemetry scaling max (must match ESP32 packet scaling)
-CURRENT_MIN = 100.0                # Minimum acceptable current per lamp (mA) = 0.1A
+PRESSURE_OK_MIN = 11.0             # Minimum pressure considered OK (Pa)
+PRESSURE_ERROR_MIN = 5.0           # Below this pressure the node is in pressure error (Pa)
+PRESSURE_MARK_FILTER_DIRTY = 20.0  # MARK purifier filter cleaning threshold (Pa)
+PRESSURE_MOLDEX_FILTER_DIRTY = 30.0  # MOLDEX purifier filter cleaning threshold (Pa)
+PRESSURE_SCALE_MAX = 130.0         # Telemetry scaling max for pressure byte
+CURRENT_VISUAL_ON_THRESHOLD = 30.0  # Current above this value is shown as functionally active
+CURRENT_FAULT_THRESHOLD = 50.0      # Any lamp below this value triggers a system fault
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
-CURRENT_YELLOW_THRESHOLD = 125.0   # <125mA = yellow warning
-CURRENT_RED_THRESHOLD = 50.0       # <50mA = red fault
 
 # ALARM TOLERANCE CONFIGURATION
 MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before triggering alarm
@@ -142,6 +162,13 @@ MAX_CONSECUTIVE_FAILURES = 3       # Number of consecutive failures before trigg
 DEMO_MODE = False                  # Set to False for real hardware testing with ESP32
 DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 
+# Persistent node configuration
+CONFIG_FILE = "walle_system_config.json"
+NODE_MODEL_PURIFIER_MARK = "Purifier MARK"
+NODE_MODEL_PURIFIER_MOLDEX = "Purifier MOLDEX"
+NODE_MODEL_UV_ONLY = "Only UV Lamps"
+NODE_MODEL_OPTIONS = [NODE_MODEL_PURIFIER_MARK, NODE_MODEL_PURIFIER_MOLDEX, NODE_MODEL_UV_ONLY]
+
 # ============================================================================
 # GLOBAL STATE
 # ============================================================================
@@ -150,6 +177,9 @@ spi = None
 last_response = {}                 # Track last response from each device
 device_stats = {}                  # Statistics for each device
 device_consecutive_failures = {}   # Track consecutive failures per device for alarm tolerance
+device_consecutive_sensor_errors = {}  # Track consecutive sensor-error reads per device
+system_config = {}
+config_lock = threading.Lock()
 
 # Shared data structure for HMI (thread-safe)
 device_data_lock = threading.Lock()
@@ -157,6 +187,145 @@ shared_device_data = {}            # Device status shared between coordinator th
 current_scanning_device = 0        # Currently scanning device ID (for HMI display)
 coordinator_running = False        # Flag to control coordinator thread
 coordinator_thread = None          # Reference to coordinator thread
+restart_requested = False          # Request flag to relaunch app after clean shutdown
+
+
+def create_default_node_entry(device_id):
+    return {
+        'device_id': device_id,
+        'model': NODE_MODEL_OPTIONS[0],
+        'maintenance': False,
+    }
+
+
+def build_default_system_config(node_count=NUM_DEVICES, setup_completed=False):
+    try:
+        normalized_count = int(node_count)
+    except (TypeError, ValueError):
+        normalized_count = NUM_DEVICES
+    normalized_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, normalized_count))
+    return {
+        'setup_completed': setup_completed,
+        'node_count': normalized_count,
+        'nodes': [create_default_node_entry(device_id) for device_id in range(1, MAX_DEVICE_ID + 1)]
+    }
+
+
+def normalize_system_config(raw_config):
+    default_config = build_default_system_config()
+    if not isinstance(raw_config, dict):
+        return default_config
+
+    try:
+        node_count = int(raw_config.get('node_count', NUM_DEVICES))
+    except (TypeError, ValueError):
+        node_count = NUM_DEVICES
+    node_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, node_count))
+
+    raw_nodes = raw_config.get('nodes', [])
+    normalized_nodes = []
+    for device_id in range(1, MAX_DEVICE_ID + 1):
+        raw_node = raw_nodes[device_id - 1] if isinstance(raw_nodes, list) and len(raw_nodes) >= device_id else {}
+        if not isinstance(raw_node, dict):
+            raw_node = {}
+        model = raw_node.get('model', NODE_MODEL_OPTIONS[0])
+        if model not in NODE_MODEL_OPTIONS:
+            model = NODE_MODEL_OPTIONS[0]
+        normalized_nodes.append({
+            'device_id': device_id,
+            'model': model,
+            'maintenance': bool(raw_node.get('maintenance', False)),
+        })
+
+    return {
+        'setup_completed': bool(raw_config.get('setup_completed', False)),
+        'node_count': node_count,
+        'nodes': normalized_nodes,
+    }
+
+
+def save_system_config(config=None):
+    global system_config
+
+    config_to_save = normalize_system_config(system_config if config is None else config)
+    with config_lock:
+        system_config = config_to_save
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as config_file:
+            json.dump(system_config, config_file, indent=2)
+    return config_to_save
+
+
+def load_system_config(force_reset=False):
+    global system_config
+
+    if force_reset:
+        return save_system_config(build_default_system_config(setup_completed=False))
+
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file:
+            loaded_config = json.load(config_file)
+        normalized_config = normalize_system_config(loaded_config)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        normalized_config = build_default_system_config(setup_completed=False)
+
+    return save_system_config(normalized_config)
+
+
+def get_system_config():
+    with config_lock:
+        cached_config = normalize_system_config(system_config) if system_config else None
+    if cached_config is not None:
+        return cached_config
+    return load_system_config()
+
+
+def get_configured_node_count():
+    return get_system_config().get('node_count', NUM_DEVICES)
+
+
+def get_node_config(device_id):
+    config = get_system_config()
+    if 1 <= device_id <= len(config['nodes']):
+        return dict(config['nodes'][device_id - 1])
+    return create_default_node_entry(device_id)
+
+
+def get_node_model(device_id):
+    return get_node_config(device_id).get('model', NODE_MODEL_OPTIONS[0])
+
+
+def is_node_in_maintenance(device_id):
+    return bool(get_node_config(device_id).get('maintenance', False))
+
+
+def get_active_device_ids():
+    config = get_system_config()
+    active_ids = []
+    for device_id in range(1, config['node_count'] + 1):
+        if not config['nodes'][device_id - 1].get('maintenance', False):
+            active_ids.append(device_id)
+    return active_ids
+
+
+def clear_runtime_state_for_node(device_id):
+    global current_scanning_device
+
+    with device_data_lock:
+        shared_device_data.pop(device_id, None)
+        if current_scanning_device == device_id:
+            current_scanning_device = 0
+    device_consecutive_failures.pop(device_id, None)
+    device_consecutive_sensor_errors.pop(device_id, None)
+    device_stats.pop(device_id, None)
+
+
+def synchronize_runtime_state():
+    configured_count = get_configured_node_count()
+    active_ids = set(get_active_device_ids())
+
+    for device_id in range(1, MAX_DEVICE_ID + 1):
+        if device_id > configured_count or device_id not in active_ids:
+            clear_runtime_state_for_node(device_id)
 
 # ============================================================================
 # SPI COMMUNICATION FUNCTIONS
@@ -179,8 +348,15 @@ def initialize_hardware():
     """Initialize GPIO and SPI for LoRa module"""
     global spi
     
+    if DEMO_MODE:
+        print("✓ Demo mode: skipping hardware initialization")
+        return True
+    
     # Setup GPIO
     try:
+        if GPIO is None:
+            print("✗ RPi.GPIO not available")
+            return False
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         GPIO.setup([GPIO_DIO0, GPIO_DIO1, GPIO_DIO2, GPIO_DIO3], GPIO.IN)
@@ -198,6 +374,9 @@ def initialize_hardware():
 
     # Setup SPI
     try:
+        if spidev is None:
+            print("✗ spidev not available")
+            return False
         spi = spidev.SpiDev()
         spi.open(SPI_BUS, SPI_DEVICE)
         spi.max_speed_hz = SPI_SPEED
@@ -210,6 +389,9 @@ def initialize_hardware():
 
 def configure_lora():
     """Configure LoRa module for receiver operation"""
+    if DEMO_MODE:
+        print("\u2713 Demo mode: skipping LoRa configuration")
+        return True
     try:
         # 1. Set to sleep mode first
         spi_write(REG_OP_MODE, 0x80)  # Sleep mode
@@ -288,6 +470,10 @@ def configure_lora():
 
 def send_request(device_id):
     """Send a read request to specific device"""
+    if not (MIN_DEVICE_ID <= device_id <= MAX_DEVICE_ID):
+        print(f"[TX ERROR] Device ID out of range: {device_id}")
+        return False
+
     try:
         # Build 4-byte request packet
         request = bytearray([NET_ID, MSG_REQ, device_id, REQ_READ_DATA])
@@ -348,9 +534,9 @@ def send_request(device_id):
 # RECEPTION FUNCTIONS
 # ============================================================================
 
-def unscale_voltage(scaled_value):
-    """Convert 8-bit scaled value back to voltage (0-255 = 0-130V RMS)."""
-    return (scaled_value / 255.0) * VOLTAGE_SCALE_MAX
+def unscale_pressure(scaled_value):
+    """Convert 8-bit scaled value back to pressure using the configured scale."""
+    return (scaled_value / 255.0) * PRESSURE_SCALE_MAX
 
 def unscale_current(scaled_value):
     """Convert 8-bit scaled value back to current in mA (0-255 = 0-2550 mA)"""
@@ -420,20 +606,23 @@ def parse_response(packet, device_id):
     resp_id = packet[2]
     seq_lo = packet[3]
     seq_hi = packet[4]
-    ac_v_scaled = packet[5]
+    pressure_scaled = packet[5]
     curr1_scaled = packet[6]
     curr2_scaled = packet[7]
     curr3_scaled = packet[8]
     curr4_scaled = packet[9]
     
     # Validate response
+    if not (MIN_DEVICE_ID <= resp_id <= MAX_DEVICE_ID):
+        return None
+
     if net_id != NET_ID or msg_type != MSG_RESP or resp_id != device_id:
         return None
     
     seq = (seq_hi << 8) | seq_lo
     
     # Unscale values to actual measurements
-    ac_voltage_V = unscale_voltage(ac_v_scaled)
+    pressure_value = unscale_pressure(pressure_scaled)
     curr1_mA = unscale_current(curr1_scaled)
     curr2_mA = unscale_current(curr2_scaled)
     curr3_mA = unscale_current(curr3_scaled)
@@ -442,12 +631,90 @@ def parse_response(packet, device_id):
     return {
         'device_id': resp_id,
         'seq': seq,
-        'ac_voltage_V': ac_voltage_V,
+        'pressure_value': pressure_value,
         'curr1_mA': curr1_mA,
         'curr2_mA': curr2_mA,
         'curr3_mA': curr3_mA,
         'curr4_mA': curr4_mA,
         'timestamp': datetime.now()
+    }
+
+
+def has_sensor_error(response):
+    """Return True when a node reading is in error according to direct thresholds."""
+    pressure = response.get('pressure_value', 0.0)
+    device_id = response.get('device_id', 0)
+    curr1 = response.get('curr1_mA', 0.0)
+    curr3 = response.get('curr3_mA', 0.0)
+
+    pressure_status = evaluate_pressure_status(device_id, pressure)
+    current_error = (
+        curr1 < CURRENT_FAULT_THRESHOLD or curr1 > CURRENT_MAX or
+        curr3 < CURRENT_FAULT_THRESHOLD or curr3 > CURRENT_MAX
+    )
+    return pressure_status['fault'] or current_error
+
+
+def evaluate_pressure_status(device_id, pressure_value):
+    model = get_node_model(device_id)
+
+    if model == NODE_MODEL_UV_ONLY:
+        return {
+            'state': 'DISABLED',
+            'label': 'PRESSURE DISABLED',
+            'short_label': 'DISABLED',
+            'color': '#9ca3af',
+            'warning': False,
+            'fault': False,
+        }
+
+    if pressure_value < PRESSURE_ERROR_MIN:
+        return {
+            'state': 'ERROR',
+            'label': 'PRESSURE ERROR',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#e74c3c',
+            'warning': False,
+            'fault': True,
+        }
+
+    if pressure_value < PRESSURE_OK_MIN:
+        return {
+            'state': 'LOW',
+            'label': 'LOW PRESSURE',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#f59e0b',
+            'warning': False,
+            'fault': True,
+        }
+
+    if model == NODE_MODEL_PURIFIER_MARK and pressure_value > PRESSURE_MARK_FILTER_DIRTY:
+        return {
+            'state': 'FILTER',
+            'label': 'FILTER NEEDS CLEANING',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#f59e0b',
+            'warning': True,
+            'fault': False,
+        }
+
+    if model == NODE_MODEL_PURIFIER_MOLDEX and pressure_value > PRESSURE_MOLDEX_FILTER_DIRTY:
+        return {
+            'state': 'FILTER',
+            'label': 'FILTER NEEDS CLEANING',
+            'short_label': f'{pressure_value:.1f} Pa',
+            'color': '#f59e0b',
+            'warning': True,
+            'fault': False,
+        }
+
+    return {
+        'state': 'OK',
+        'label': 'PRESSURE OK',
+        'short_label': f'{pressure_value:.1f} Pa',
+        'color': '#2ecc71',
+        'warning': False,
+        'fault': False,
     }
 
 # ============================================================================
@@ -456,7 +723,12 @@ def parse_response(packet, device_id):
 
 def query_device(device_id):
     """Query single device and collect response"""
-    global current_scanning_device, device_data_lock, device_consecutive_failures
+    global current_scanning_device, device_data_lock, device_consecutive_failures, device_consecutive_sensor_errors
+
+    if is_node_in_maintenance(device_id):
+        clear_runtime_state_for_node(device_id)
+        print(f"\n  [Device {device_id}] MAINTENANCE MODE")
+        return None
     
     # Update shared variable so HMI knows which device we're scanning
     with device_data_lock:
@@ -471,7 +743,7 @@ def query_device(device_id):
             if response_data:
                 response = parse_response(response_data, device_id)
                 if response:
-                    print(f"✓ AC={response['ac_voltage_V']:.1f}V " +
+                    print(f"✓ P={response['pressure_value']:.1f} " +
                           f"I1={response['curr1_mA']:.0f}mA " +
                           f"I2={response['curr2_mA']:.0f}mA " +
                           f"I3={response['curr3_mA']:.0f}mA " +
@@ -488,6 +760,12 @@ def query_device(device_id):
                     
                     # Reset consecutive failure counter on successful response
                     device_consecutive_failures[device_id] = 0
+
+                    # Track consecutive sensor errors (used for delayed tower alarm)
+                    if has_sensor_error(response):
+                        device_consecutive_sensor_errors[device_id] = device_consecutive_sensor_errors.get(device_id, 0) + 1
+                    else:
+                        device_consecutive_sensor_errors[device_id] = 0
                     
                     return response
                 else:
@@ -553,7 +831,8 @@ def query_all_devices():
         print(f"[WARNING] Error during LoRa reset: {e}")
     
     responses = {}
-    for device_id in range(1, NUM_DEVICES + 1):
+    synchronize_runtime_state()
+    for device_id in get_active_device_ids():
         response = query_device(device_id)
         if response:
             responses[device_id] = response
@@ -568,7 +847,7 @@ def query_all_devices():
 def generate_demo_data(device_id):
     """Generate simulated sensor data for testing without real hardware"""
     # Simulate realistic voltage variations (100-135V for real operation)
-    voltage = random.uniform(100.0, 135.0)
+    pressure = random.uniform(100.0, 135.0)
     
     # 70% chance of normal operation, 30% chance of fault
     if random.random() < 0.7:
@@ -580,7 +859,7 @@ def generate_demo_data(device_id):
     else:
         # Fault state - some lamps off
         if random.random() < 0.5:
-            voltage = random.uniform(8.0, 10.5)  # Low voltage fault
+            pressure = random.uniform(8.0, 10.5)  # Low pressure fault
         curr1 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
         curr2 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
         curr3 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
@@ -589,7 +868,7 @@ def generate_demo_data(device_id):
     return {
         'device_id': device_id,
         'seq': random.randint(0, 65535),
-        'ac_voltage_V': voltage,
+        'pressure_value': pressure,
         'curr1_mA': curr1,
         'curr2_mA': curr2,
         'curr3_mA': curr3,
@@ -611,8 +890,10 @@ def demo_loop():
             print(f"Demo Cycle #{cycle_count}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"{'='*70}")
             
-            # Generate and update simulated data for all devices
-            for device_id in range(1, NUM_DEVICES + 1):
+            synchronize_runtime_state()
+
+            # Generate and update simulated data for all active devices
+            for device_id in get_active_device_ids():
                 response = generate_demo_data(device_id)
                 
                 # Update shared data structure (thread-safe)
@@ -620,7 +901,7 @@ def demo_loop():
                     shared_device_data[device_id] = response
                 
                 # Print simulated response
-                print(f"  [Device {device_id}] ✓ AC={response['ac_voltage_V']:.1f}V " +
+                    print(f"  [Device {device_id}] ✓ P={response['pressure_value']:.1f} " +
                       f"I1={response['curr1_mA']:.0f}mA " +
                       f"I2={response['curr2_mA']:.0f}mA " +
                       f"I3={response['curr3_mA']:.0f}mA " +
@@ -630,7 +911,7 @@ def demo_loop():
             
             # Print summary
             print(f"\nDemo Summary:")
-            print(f"  - Total devices simulated: {NUM_DEVICES}")
+            print(f"  - Total active devices simulated: {len(get_active_device_ids())}")
             
             # Wait for next cycle
             print(f"\nWaiting {DEMO_UPDATE_INTERVAL} seconds for next cycle...")
@@ -650,7 +931,7 @@ class AppIndustrial:
     def __init__(self, root):
         self.root = root
         self.root.title("WALL-E MONITOR")
-        self.root.geometry("480x800")
+        self.root.geometry("480x800")  # 7-inch touch screen (portrait) with taskbar
         self.root.configure(bg="#483698")
         
         self.sonido_habil = True  
@@ -663,125 +944,368 @@ class AppIndustrial:
         self.buzzer_active = False
         self.buzzer_off_time = 0.0
         self.test_mode = False
+        self.leds_v = []
+        self.lbls_v_val = []
+        self.frames_robot = []
+        self.uv_lamps = []
+        self.model_labels = []
+        self.mode_labels = []
+        self.map_window = None
+        self.logs_window = None
+        self.detail_windows = {}
 
-        # --- ENCABEZADO (Logos e Iconos) ---
+        # --- HEADER (Logos, Title, Clock) ---
         self.header = tk.Frame(self.root, bg="#483698")
         self.header.pack(fill="x", padx=15, pady=10)
 
+        # Left frame for Bimbo logo
+        left_frame = tk.Frame(self.header, bg="#483698")
+        left_frame.pack(side="left")
+        
         try:
-            # Logo Bimbo como icono (sin recuadro blanco)
             img_b = Image.open("WALL-E HMI images/Grupo_Bimbo.png").convert("RGBA")
             self.photo = ImageTk.PhotoImage(img_b.resize((70, 35), Image.LANCZOS))
-            tk.Label(self.header, image=self.photo, bg="#483698").pack(side="left")
-
-            # Logo Moldex como icono
-            img_m = Image.open("WALL-E HMI images/Moldex1.png").convert("RGBA")
-            self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
-            tk.Label(self.header, image=self.photo2, bg="#483698").pack(side="left", padx=15)
+            tk.Label(left_frame, image=self.photo, bg="#483698").pack()
         except:
-            tk.Label(self.header, text="DASHBOARD", fg="white", bg="#483698", font=("Arial", 10, "bold")).pack(side="left")
+            tk.Label(left_frame, text="BIMBO", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack()
 
-        # Reloj en la esquina superior derecha
-        self.lbl_reloj = tk.Label(self.header, text="", font=("Courier", 12, "bold"), fg="#00ff00", bg="#483698")
-        self.lbl_reloj.pack(side="right")
+        # Center frame for title and clock
+        center_frame = tk.Frame(self.header, bg="#483698")
+        center_frame.pack(side="left", expand=True, fill="both")
+        
+        tk.Label(center_frame, text="UV LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack()
+        
+        self.lbl_reloj = tk.Label(center_frame, text="", font=("Courier", 11, "bold"), fg="#00ff00", bg="#483698")
+        self.lbl_reloj.pack()
         self.actualizar_hora()
 
-        tk.Label(self.root, text="MONITOREO DE LÁMPARAS", font=("Arial", 13, "bold"), fg="white", bg="#483698").pack(pady=5)
+        # Right frame for Moldex logo
+        right_frame = tk.Frame(self.header, bg="#483698")
+        right_frame.pack(side="right")
+        
+        try:
+            img_m = Image.open("WALL-E HMI images/Moldex1.png").convert("RGBA")
+            self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
+            tk.Label(right_frame, image=self.photo2, bg="#483698").pack()
+        except:
+            tk.Label(right_frame, text="MOLDEX", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack()
 
-        # --- ESTADO DE ESCANEO ---
+        # --- SCANNING STATUS ---
         self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
         self.status_frame.pack(fill="x", padx=10, pady=2)
-        self.lbl_scanning = tk.Label(self.status_frame, text="Escaneando: W-0", font=("Arial", 9, "bold"), 
+        self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: Node-0", font=("Arial", 8, "bold"), 
                                      fg="#00ff00", bg="#2a1a5a")
         self.lbl_scanning.pack()
+        self.lbl_fault_legend = tk.Label(self.status_frame, text="Status: ALL OK", font=("Arial", 8, "bold"),
+                         fg="#d9f99d", bg="#2a1a5a", wraplength=440, justify="center")
+        self.lbl_fault_legend.pack(pady=(2, 0))
 
-        # --- PANEL DE ROBOTS (DISTRIBUCIÓN 3-3-3) ---
+        self.ensure_configuration_ready()
+        if not self.root.winfo_exists():
+            self.initialization_aborted = True
+            return
+
+        self.initialization_aborted = False
+
+        # --- PAGINATION ---
+        self.current_page = 0
+        self.total_pages = 1
+        
+        self.page_frame = tk.Frame(self.root, bg="#483698")
+        self.page_frame.pack(fill="x", padx=5, pady=2)
+        
+        tk.Button(self.page_frame, text="◀ PREV", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
+                 command=self.pagina_anterior, width=12, height=2).pack(side="left", padx=3, pady=3)
+        
+        self.lbl_page = tk.Label(self.page_frame, text=f"Page 1 of {self.total_pages}", font=("Arial", 7, "bold"),
+                                bg="#483698", fg="#ffc72c")
+        self.lbl_page.pack(side="left", expand=True, padx=5)
+        
+        tk.Button(self.page_frame, text="NEXT ▶", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
+                 command=self.pagina_siguiente, width=12, height=2).pack(side="right", padx=3, pady=3)
+
+        # --- PANEL DE ROBOTS ---
         self.container = tk.Frame(self.root, bg="#483698")
-        self.container.pack(expand=True, fill="both", padx=5)
-
-        self.leds_v, self.lbls_v_val, self.frames_robot = [], [], []
-        self.uv_lamps = []  # per-node list of 2 active current indicators (CH1, CH2)
-
-        for i in range(NUM_DEVICES):
-            # Creamos una "tarjeta" para cada robot
-            f = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
-            f.grid(row=i // 3, column=i % 3, padx=5, pady=8, sticky="nsew")
-            self.frames_robot.append(f)
-
-            tk.Label(f, text=f"W-{i+1}", font=("Arial", 9, "bold"), bg="#ffc72c", fg="black").pack(fill="x")
-            
-            # LED Alimentación
-            cv = tk.Canvas(f, width=50, height=50, bg="#3a2a7a", highlightthickness=0)
-            cv.pack()
-            circ_v = cv.create_oval(8, 8, 42, 42, fill="#555555", outline="white")
-            self.leds_v.append((cv, circ_v))
-            
-            lv = tk.Label(f, text="--- V", font=("Arial", 8, "bold"), bg="#3a2a7a", fg="#ff4444")
-            lv.pack()
-            self.lbls_v_val.append(lv)
-
-            # Indicadores de corriente activos (2 focos: CH1 y CH2)
-            lamps_frame = tk.Frame(f, bg="#3a2a7a")
-            lamps_frame.pack(pady=2)
-            lamp_widgets = []
-            for lamp_idx in range(2):
-                lamp_canvas = tk.Canvas(lamps_frame, width=16, height=16, bg="#3a2a7a", highlightthickness=0)
-                lamp_canvas.grid(row=0, column=lamp_idx, padx=2)
-                lamp_circle = lamp_canvas.create_oval(3, 3, 13, 13, fill="#555555", outline="white")
-                lamp_widgets.append((lamp_canvas, lamp_circle))
-            self.uv_lamps.append(lamp_widgets)
-
-            # Botón DETALLE para ver lámparas individuales
-            tk.Button(f, text="DETALLE", font=("Arial", 7, "bold"), bg="#ffc72c", fg="black",
-                     command=lambda device_id=i+1: self.mostrar_detalle_lamparas(device_id),
-                     height=1, padx=2).pack(fill="x", pady=1)
-
-            # Click para ver detalle por nodo
-            f.bind("<Button-1>", lambda e, node_id=i+1: self.mostrar_detalle_lamparas(node_id))
+        self.container.pack(expand=True, fill="both", padx=2, pady=1)
 
         # Configurar columnas iguales
-        for j in range(3): self.container.grid_columnconfigure(j, weight=1)
+        for j in range(HMI_GRID_COLUMNS):
+            self.container.grid_columnconfigure(j, weight=1)
+
+        self.rebuild_node_grid()
 
         # --- BOTONERA INFERIOR ---
         self.f_btn = tk.Frame(self.root, bg="#483698")
-        self.f_btn.pack(side="bottom", fill="x", pady=15)
+        self.f_btn.pack(side="bottom", fill="x", pady=1)
         
-        b_style = {"font": ("Arial", 8, "bold"), "bg": "#ffc72c", "height": 2, "activebackground": "#e6b422"}
+        b_style = {"font": ("Arial", 7, "bold"), "bg": "#ffc72c", "height": 1, "activebackground": "#e6b422"}
         
-        tk.Button(self.f_btn, text="SILENCIAR", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="ACTIVAR SONIDO + RESET", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="MUTE", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="SOUND ON", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
         tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="MAPA", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
-        tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
+        tk.Button(self.f_btn, text="MAP", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
+        tk.Button(self.f_btn, text="SETTINGS", command=self.open_settings_dialog, **b_style).grid(row=0, column=4, sticky="we", padx=2)
+        # tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
+        # tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
         
         # Admin buttons
         admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
-        tk.Button(self.f_btn, text="REINICIAR PROGRAMA", command=self.reiniciar_programa, **admin_style).grid(row=2, column=0, columnspan=2, sticky="we", padx=2, pady=2)
-        tk.Button(self.f_btn, text="REINICIAR SISTEMA", command=self.reiniciar_sistema, **admin_style).grid(row=2, column=2, sticky="we", padx=2, pady=2)
-        tk.Button(self.f_btn, text="APAGAR", command=self.apagar_sistema, **admin_style).grid(row=2, column=3, sticky="we", padx=2, pady=2)
-        self.f_btn.grid_columnconfigure((0,1,2,3), weight=1)
+        tk.Button(self.f_btn, text="RESTART PROGRAM", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=5, sticky="we", padx=2, pady=2)
+        self.f_btn.grid_columnconfigure((0,1,2,3,4), weight=1)
 
         # Carga imagen para el Mapa
         try:
-            m_img = Image.open("WALL-E HMI images/Bimbo.png")
+            m_img = Image.open("WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
             self.img_layout_full = ImageTk.PhotoImage(m_img.resize((440, 550), Image.LANCZOS))
         except: 
             self.img_layout_full = None
 
         # Setup GPIO for tower indicators
         try:
-            initial_off = GPIO.HIGH if RELAY_ACTIVE_LOW else GPIO.LOW
-            GPIO.setup(PIN_GREEN_TURRET, GPIO.OUT, initial=initial_off)
-            GPIO.setup(PIN_YELLOW_TURRET, GPIO.OUT, initial=initial_off)
-            GPIO.setup(PIN_RED_TURRET, GPIO.OUT, initial=initial_off)
-            GPIO.setup(PIN_BUZZER, GPIO.OUT, initial=initial_off)
-            print("✓ Tower GPIO initialized")
+            if GPIO is not None and not DEMO_MODE:
+                initial_off = GPIO.HIGH if RELAY_ACTIVE_LOW else GPIO.LOW
+                GPIO.setup(PIN_GREEN_TURRET, GPIO.OUT, initial=initial_off)
+                GPIO.setup(PIN_YELLOW_TURRET, GPIO.OUT, initial=initial_off)
+                GPIO.setup(PIN_RED_TURRET, GPIO.OUT, initial=initial_off)
+                GPIO.setup(PIN_BUZZER, GPIO.OUT, initial=initial_off)
+                print("✓ Tower GPIO initialized")
+            else:
+                print("⚠ Tower GPIO skipped (demo mode or GPIO unavailable)")
         except Exception as e:
             print(f"⚠ Tower GPIO warning: {e}")
 
         # Start periodic update of device status from shared data
         self.actualizar_datos_dispositivos()
+
+    def ensure_configuration_ready(self):
+        if not get_system_config().get('setup_completed', False):
+            if not self.show_configuration_dialog(first_run=True):
+                save_system_config(get_system_config())
+                self.registrar_log("Initial setup skipped; using current configuration")
+
+    def rebuild_node_grid(self):
+        configured_count = get_configured_node_count()
+        self.total_pages = max(1, (configured_count + NODES_PER_PAGE - 1) // NODES_PER_PAGE)
+        self.current_page = min(self.current_page, self.total_pages - 1)
+
+        for widget in self.container.winfo_children():
+            widget.destroy()
+
+        self.leds_v = []
+        self.lbls_v_val = []
+        self.frames_robot = []
+        self.uv_lamps = []
+        self.model_labels = []
+        self.mode_labels = []
+
+        for device_id in range(1, configured_count + 1):
+            frame = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
+            pos_in_page = (device_id - 1) % NODES_PER_PAGE
+            row = pos_in_page // HMI_GRID_COLUMNS
+            col = pos_in_page % HMI_GRID_COLUMNS
+            frame.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+            frame.device_id = device_id
+            frame.page_num = (device_id - 1) // NODES_PER_PAGE
+            self.frames_robot.append(frame)
+
+            tk.Label(frame, text=f"Node-{device_id}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
+
+            model_label = tk.Label(frame, text=get_node_model(device_id), font=("Arial", 6, "bold"), bg="#3a2a7a", fg="#9ed8ff")
+            model_label.pack()
+            self.model_labels.append(model_label)
+
+            mode_text = "MAINTENANCE" if is_node_in_maintenance(device_id) else "OPERATING"
+            mode_color = "#ffb347" if is_node_in_maintenance(device_id) else "#d9f99d"
+            mode_label = tk.Label(frame, text=mode_text, font=("Arial", 6, "bold"), bg="#3a2a7a", fg=mode_color)
+            mode_label.pack()
+            self.mode_labels.append(mode_label)
+
+            cv = tk.Canvas(frame, width=35, height=35, bg="#3a2a7a", highlightthickness=0)
+            cv.pack(pady=0)
+            circ_v = cv.create_oval(6, 6, 29, 29, fill="#555555", outline="white")
+            self.leds_v.append((cv, circ_v))
+
+            pressure_label = tk.Label(frame, text="--- Pa", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
+            pressure_label.pack()
+            self.lbls_v_val.append(pressure_label)
+
+            lamps_frame = tk.Frame(frame, bg="#3a2a7a")
+            lamps_frame.pack(pady=0)
+            lamp_widgets = []
+            for lamp_idx in range(2):
+                lamp_canvas = tk.Canvas(lamps_frame, width=14, height=14, bg="#3a2a7a", highlightthickness=0)
+                lamp_canvas.grid(row=0, column=lamp_idx, padx=1)
+                lamp_circle = lamp_canvas.create_oval(2, 2, 12, 12, fill="#555555", outline="white")
+                lamp_widgets.append((lamp_canvas, lamp_circle))
+            self.uv_lamps.append(lamp_widgets)
+
+            tk.Button(frame, text="VIEW", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
+                     command=lambda node_id=device_id: self.mostrar_detalle_lamparas(node_id),
+                     height=1, padx=2).pack(fill="x", pady=2)
+            frame.bind("<Button-1>", lambda e, node_id=device_id: self.mostrar_detalle_lamparas(node_id))
+
+        self.refresh_page()
+
+    def apply_system_configuration(self, new_config):
+        save_system_config(new_config)
+        synchronize_runtime_state()
+        self.rebuild_node_grid()
+
+    def show_configuration_dialog(self, first_run=False):
+        current_config = get_system_config()
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Initial Node Setup" if first_run else "System Settings")
+        dialog.geometry("460x680")
+        dialog.configure(bg="#1f1f2e")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        tk.Label(dialog,
+                 text="Configure Nodes" if first_run else "Node Settings",
+                 font=("Arial", 14, "bold"), bg="#1f1f2e", fg="white").pack(pady=(12, 4))
+        tk.Label(dialog,
+                 text="Select how many nodes are installed and assign a model to each one.",
+                 font=("Arial", 9), bg="#1f1f2e", fg="#d1d5db").pack(pady=(0, 10))
+
+        top_frame = tk.Frame(dialog, bg="#1f1f2e")
+        top_frame.pack(fill="x", padx=12)
+        tk.Label(top_frame, text="Number of Nodes", font=("Arial", 10, "bold"), bg="#1f1f2e", fg="white").pack(side="left")
+
+        node_count_var = tk.IntVar(value=current_config.get('node_count', NUM_DEVICES))
+        node_count_spinbox = tk.Spinbox(top_frame, from_=1, to=MAX_DEVICE_ID, width=6, textvariable=node_count_var)
+        node_count_spinbox.pack(side="right")
+
+        list_frame = tk.Frame(dialog, bg="#1f1f2e")
+        list_frame.pack(expand=True, fill="both", padx=12, pady=10)
+
+        canvas = tk.Canvas(list_frame, bg="#1f1f2e", highlightthickness=0)
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        rows_frame = tk.Frame(canvas, bg="#1f1f2e")
+        rows_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=rows_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", expand=True, fill="both")
+        scrollbar.pack(side="right", fill="y")
+
+        row_vars = {}
+        dialog_state = {'saved': False}
+
+        def build_rows(*_args):
+            try:
+                requested_count = int(node_count_var.get())
+            except (TypeError, ValueError):
+                requested_count = current_config.get('node_count', NUM_DEVICES)
+            requested_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, requested_count))
+
+            for widget in rows_frame.winfo_children():
+                widget.destroy()
+
+            for device_id in range(1, requested_count + 1):
+                existing_node = current_config['nodes'][device_id - 1]
+                if device_id not in row_vars:
+                    row_vars[device_id] = {
+                        'model': tk.StringVar(value=existing_node.get('model', NODE_MODEL_OPTIONS[0])),
+                        'maintenance': tk.BooleanVar(value=existing_node.get('maintenance', False)),
+                    }
+
+                row = tk.Frame(rows_frame, bg="#2a2a3a", pady=4)
+                row.pack(fill="x", pady=2)
+
+                tk.Label(row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 9, "bold"), bg="#2a2a3a", fg="white").pack(side="left", padx=6)
+
+                option = tk.OptionMenu(row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
+                option.config(width=18, bg="#ffc72c", fg="black", highlightthickness=0,
+                              activebackground="#e6b422", activeforeground="black",
+                              anchor="w", relief="raised", bd=2)
+                option["menu"].config(bg="white", fg="black", activebackground="#ffc72c",
+                                       activeforeground="black", bd=0)
+                option.pack(side="left", padx=4)
+
+                tk.Checkbutton(row,
+                               text="Maintenance mode",
+                               variable=row_vars[device_id]['maintenance'],
+                               bg="#2a2a3a", fg="#ffcc80", selectcolor="#2a2a3a",
+                               activebackground="#2a2a3a", activeforeground="#ffcc80").pack(side="right", padx=8)
+
+        def save_dialog():
+            try:
+                requested_count = int(node_count_var.get())
+            except (TypeError, ValueError):
+                messagebox.showerror("Invalid Value", "Node count must be a whole number.", parent=dialog)
+                return
+
+            requested_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, requested_count))
+            new_config = normalize_system_config(current_config)
+            new_config['setup_completed'] = True
+            new_config['node_count'] = requested_count
+            for device_id in range(1, requested_count + 1):
+                new_config['nodes'][device_id - 1]['model'] = row_vars[device_id]['model'].get()
+                new_config['nodes'][device_id - 1]['maintenance'] = bool(row_vars[device_id]['maintenance'].get())
+
+            self.apply_system_configuration(new_config)
+            dialog_state['saved'] = True
+            dialog.destroy()
+
+        def reset_configuration():
+            if not messagebox.askyesno("Reset Configuration",
+                                       "This will clear the saved node setup and reopen the setup wizard. Continue?",
+                                       parent=dialog):
+                return
+            load_system_config(force_reset=True)
+            dialog.destroy()
+            self.show_configuration_dialog(first_run=True)
+
+        def on_close():
+            if first_run and not dialog_state['saved']:
+                if messagebox.askyesno("Skip Setup", "Skip initial setup and continue with the current configuration?", parent=dialog):
+                    dialog.destroy()
+                return
+            dialog.destroy()
+
+        node_count_var.trace_add('write', build_rows)
+        build_rows()
+
+        button_frame = tk.Frame(dialog, bg="#1f1f2e")
+        button_frame.pack(fill="x", padx=12, pady=(4, 12))
+        if not first_run:
+            tk.Button(button_frame, text="RESET CONFIGURATION", command=reset_configuration,
+                     bg="#b91c1c", fg="white", font=("Arial", 9, "bold")).pack(side="left")
+        tk.Button(button_frame, text="CANCEL", command=on_close,
+                 bg="#6b7280", fg="white", font=("Arial", 9, "bold")).pack(side="right", padx=4)
+        tk.Button(button_frame, text="SAVE", command=save_dialog,
+                 bg="#16a34a", fg="white", font=("Arial", 9, "bold")).pack(side="right", padx=4)
+
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+        self.root.wait_window(dialog)
+        return dialog_state['saved']
+
+    def open_settings_dialog(self):
+        self.show_configuration_dialog(first_run=False)
+
+    def toggle_window(self, window_attr_name):
+        window = getattr(self, window_attr_name, None)
+        if window is not None and window.winfo_exists():
+            window.destroy()
+            setattr(self, window_attr_name, None)
+            return None
+        return "open"
+
+    def toggle_detail_window(self, device_id):
+        window = self.detail_windows.get(device_id)
+        if window is not None and window.winfo_exists():
+            window.destroy()
+            self.detail_windows.pop(device_id, None)
+            return None
+        return "open"
+
+    def register_window_close(self, window, cleanup_callback):
+        def on_close():
+            cleanup_callback()
+            if window.winfo_exists():
+                window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", on_close)
+        return on_close
 
     # =======================================================
     # MÉTODOS DE LÓGICA Y CONTROL
@@ -791,6 +1315,31 @@ class AppIndustrial:
         self.actualizar_estado_escaneo()
         self.root.after(1000, self.actualizar_hora)
     
+    def pagina_anterior(self):
+        """Navigate to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.refresh_page()
+    
+    def pagina_siguiente(self):
+        """Navigate to next page"""
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.refresh_page()
+    
+    def refresh_page(self):
+        """Update visibility of frames based on current page"""
+        for f in self.frames_robot:
+            if f.page_num == self.current_page:
+                f.grid()
+            else:
+                f.grid_remove()
+        
+        # Update page label
+        start_device = self.current_page * NODES_PER_PAGE + 1
+        end_device = min((self.current_page + 1) * NODES_PER_PAGE, get_configured_node_count())
+        self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (Node-{start_device} to Node-{end_device})")
+    
     def actualizar_estado_escaneo(self):
         """Update scanning device status"""
         global current_scanning_device, device_data_lock
@@ -798,9 +1347,9 @@ class AppIndustrial:
             with device_data_lock:
                 device_id = current_scanning_device
             if device_id > 0:
-                self.lbl_scanning.config(text=f"Escaneando: W-{device_id}")
+                self.lbl_scanning.config(text=f"Scanning: Node-{device_id}")
             else:
-                self.lbl_scanning.config(text="Escaneando: W-0")
+                self.lbl_scanning.config(text="Scanning: Node-0")
         except:
             pass
 
@@ -813,47 +1362,36 @@ class AppIndustrial:
         self.registrar_log("TEST MODE OFF")
 
     def reiniciar_programa(self):
-        """Reiniciar el programa (exit y dejar que se reabre automáticamente)"""
-        if messagebox.askyesno("Reiniciar", "¿Reiniciar el programa?"):
-            self.registrar_log("REINICIANDO PROGRAMA...")
-            global coordinator_running
+        """Restart program: closes and reopens automatically."""
+        if messagebox.askyesno("Restart", "Restart the program?"):
+            self.registrar_log("RESTARTING PROGRAM...")
+            global coordinator_running, restart_requested
+            restart_requested = True
             coordinator_running = False
             self.root.after(500, lambda: self.root.quit())
 
-    def reiniciar_sistema(self):
-        """Reiniciar la Raspberry Pi"""
-        if messagebox.askyesno("ATENCIÓN", "¿Reiniciar el sistema? (esto apagará y encenderá la Pi)"):
-            self.registrar_log("REINICIANDO SISTEMA...")
-            os.system("sudo reboot")
-
-    def apagar_sistema(self):
-        """Apagar la Raspberry Pi"""
-        if messagebox.askyesno("ATENCIÓN", "¿Apagar el sistema? (esto apagará la Pi)"):
-            self.registrar_log("APAGANDO SISTEMA...")
-            os.system("sudo poweroff")
-
     def classify_current_status(self, current_mA):
         """Return (status_code, color, description) for active current indicators."""
-        if current_mA < CURRENT_RED_THRESHOLD:
-            return "RED", "#e74c3c", "Ambas lámparas en fallo"
-        if current_mA < CURRENT_YELLOW_THRESHOLD:
-            return "YELLOW", "#f1c40f", "Una lámpara en fallo"
+        if current_mA < CURRENT_VISUAL_ON_THRESHOLD:
+            return "RED", "#e74c3c", "Lamp current missing"
+        if current_mA < CURRENT_FAULT_THRESHOLD:
+            return "YELLOW", "#f59e0b", "Low current warning"
         if current_mA <= CURRENT_MAX:
-            return "GREEN", "#2ecc71", "Lámparas funcionando OK"
-        return "RED", "#e74c3c", "Ambas lámparas en fallo"
+            return "GREEN", "#2ecc71", "Lamps working OK"
+        return "RED", "#e74c3c", "Overcurrent fault"
 
-    def actualizar_torreta(self, total_yellow, total_red, communication_failure):
+    def actualizar_torreta(self, confirmed_sensor_failure, communication_failure, warning_detected):
         """
         Update physical tower light and buzzer based on system health
         
         Args:
-            total_yellow: Number of yellow current indicators across all nodes
-            total_red: Number of red current indicators across all nodes
+            confirmed_sensor_failure: True if any node remains in sensor error >= MAX_CONSECUTIVE_FAILURES reads
             communication_failure: True if any device has >= MAX_CONSECUTIVE_FAILURES
+            warning_detected: True if any node has a warning state that should light the yellow tower
         """
         try:
-            red_active = communication_failure or total_red >= 2
-            yellow_active = (not red_active) and (total_red == 1 or total_yellow >= 1)
+            red_active = communication_failure or confirmed_sensor_failure
+            yellow_active = warning_detected and not red_active
             green_active = (not red_active) and (not yellow_active)
 
             # Only update relays if state changed to reduce GPIO interference with SPI
@@ -878,19 +1416,19 @@ class AppIndustrial:
                 # If red just turned on, initialize buzzer timer
                 if not red_was_active:
                     self.last_buzzer_time = now - 10.0
-                    print(f"[BUZZER] Rojo activado, buzzer inicializado")
+                    print(f"[BUZZER] Red activated, buzzer initialized")
                 # Trigger buzzer every 10 seconds
                 if not self.buzzer_active and (now - self.last_buzzer_time) >= 10.0:
                     set_relay(PIN_BUZZER, True)
                     self.buzzer_active = True
                     self.buzzer_off_time = now + 1.0
                     self.last_buzzer_time = now
-                    print(f"[BUZZER] ON a los {now - self.last_buzzer_time:.1f}s")
+                    print(f"[BUZZER] ON after {now - self.last_buzzer_time:.1f}s")
                 # Turn off buzzer after 1 second
                 if self.buzzer_active and now >= self.buzzer_off_time:
                     set_relay(PIN_BUZZER, False)
                     self.buzzer_active = False
-                    print(f"[BUZZER] OFF después de 1s")
+                    print(f"[BUZZER] OFF after 1s")
             else:
                 # Red is not active, make sure buzzer is off
                 if self.buzzer_active:
@@ -913,56 +1451,57 @@ class AppIndustrial:
             self.buzzer_active = True
             self.buzzer_off_time = now + 1.0
             self.last_buzzer_time = now
-            print(f"[BUZZER] Sonido ON")
+            print(f"[BUZZER] Sound ON")
         # Turn off buzzer after 1 second
         if self.buzzer_active and now >= self.buzzer_off_time:
             set_relay(PIN_BUZZER, False)
             self.buzzer_active = False
-            print(f"[BUZZER] Sonido OFF")
+            print(f"[BUZZER] Sound OFF")
 
     def actualizar_datos_dispositivos(self):
         """Update HMI display with latest device data from coordinator"""
-        global shared_device_data, device_data_lock, device_consecutive_failures
-        
-        total_yellow_indicators = 0
-        total_red_indicators = 0
+        global shared_device_data, device_data_lock, device_consecutive_failures, device_consecutive_sensor_errors
+
+        confirmed_sensor_failure_detected = False
         communication_failure_detected = False
+        failing_nodes = []
+        warning_nodes = []
 
         try:
             with device_data_lock:
-                for device_id in range(1, NUM_DEVICES + 1):
+                configured_count = get_configured_node_count()
+                for device_id in range(1, configured_count + 1):
                     idx = device_id - 1
+                    node_config = get_node_config(device_id)
+
+                    self.model_labels[idx].config(text=node_config['model'])
+                    if node_config['maintenance']:
+                        self.mode_labels[idx].config(text="MAINTENANCE", fg="#ffb347")
+                        self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#6b7280")
+                        for lamp_i in range(2):
+                            self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#6b7280")
+                        self.lbls_v_val[idx].config(text="MAINT", fg="#ffb347")
+                        continue
+                    else:
+                        self.mode_labels[idx].config(text="OPERATING", fg="#d9f99d")
                     
                     if device_id in shared_device_data:
                         data = shared_device_data[device_id]
                         
                         # Extract sensor values
-                        voltage = data.get('ac_voltage_V', 0)
+                        pressure = data.get('pressure_value', 0)
                         curr1 = data.get('curr1_mA', 0)
                         curr3 = data.get('curr3_mA', 0)
+                        pressure_status = evaluate_pressure_status(device_id, pressure)
                         
-                        # Voltage indicator keeps original logic
-                        v_ok = VOLTAGE_MIN <= voltage <= VOLTAGE_MAX
                         current_status = [
                             self.classify_current_status(curr1),
                             self.classify_current_status(curr3),
                         ]
-                        
-                        # Count indicators for tower logic (CH1 and CH3 + Voltage)
-                        if not self.test_mode or device_id == 1:
-                            # Add voltage status to indicators
-                            # If voltage is very low (0-10V), it's a critical failure (RED)
-                            # If voltage is out of range but not critical, it's a warning (YELLOW)
-                            if voltage < 10:
-                                total_red_indicators += 1
-                            elif not v_ok:
-                                total_yellow_indicators += 1
-                            
-                            for status, _, _ in current_status:
-                                if status == "RED":
-                                    total_red_indicators += 1
-                                elif status == "YELLOW":
-                                    total_yellow_indicators += 1
+
+                        # Confirmed sensor error only after MAX_CONSECUTIVE_FAILURES reads per node
+                        if (not self.test_mode or device_id == 1) and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                            confirmed_sensor_failure_detected = True
 
                         # Check consecutive failures instead of timestamp
                         # Only trigger alarm after MAX_CONSECUTIVE_FAILURES (prevents false alarms during LoRa recovery)
@@ -971,15 +1510,36 @@ class AppIndustrial:
                             # In test mode, only Device 1 can trigger communication failure alarm
                             if not self.test_mode or device_id == 1:
                                 communication_failure_detected = True
+                                failing_nodes.append(device_id)
+                        if pressure_status['fault']:
+                            confirmed_sensor_failure_detected = True
+                            if device_id not in failing_nodes:
+                                failing_nodes.append(device_id)
+                        elif pressure_status['warning']:
+                            if device_id not in warning_nodes:
+                                warning_nodes.append(device_id)
+                        current_fault_detected = any(status_code == "RED" for status_code, _, _ in current_status)
+                        current_warning_detected = any(status_code == "YELLOW" for status_code, _, _ in current_status)
+                        if current_fault_detected:
+                            confirmed_sensor_failure_detected = True
+                            if device_id not in failing_nodes:
+                                failing_nodes.append(device_id)
+                        elif current_warning_detected:
+                            if device_id not in warning_nodes:
+                                warning_nodes.append(device_id)
+                        if (not self.test_mode or device_id == 1) and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                            if device_id not in failing_nodes:
+                                failing_nodes.append(device_id)
                         
                         # Update visual indicators
-                        color_v = "#2ecc71" if v_ok else "#e74c3c"
+                        color_v = pressure_status['color']
                         
                         self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill=color_v)
                         # Update active current indicators (CH1 and CH3)
                         for lamp_i, (_, lamp_color, _) in enumerate(current_status):
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
-                        self.lbls_v_val[idx].config(text=f"{voltage:.1f} V", fg="white" if v_ok else "#ff4444")
+                        label_color = "white" if pressure_status['state'] == 'OK' else pressure_status['color']
+                        self.lbls_v_val[idx].config(text=pressure_status['short_label'], fg=label_color)
 
                     else:
                         # No data available for this device - check consecutive failures
@@ -994,44 +1554,69 @@ class AppIndustrial:
                             # Only trigger alarm if Device 1 has exceeded failure threshold
                             if device_id == 1 and consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
+                                failing_nodes.append(device_id)
+                            if device_id == 1 and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                                confirmed_sensor_failure_detected = True
+                                if device_id not in failing_nodes:
+                                    failing_nodes.append(device_id)
                         else:
                             self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#555555")
                             for lamp_i in range(2):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
-                            self.lbls_v_val[idx].config(text="--- V", fg="#ff4444")
+                            self.lbls_v_val[idx].config(text="--- Pa", fg="#ff4444")
                             # Only trigger alarm if exceeded failure threshold
                             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
+                                failing_nodes.append(device_id)
+                            if device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
+                                confirmed_sensor_failure_detected = True
+                                if device_id not in failing_nodes:
+                                    failing_nodes.append(device_id)
         
         except Exception as e:
             print(f"HMI update error: {e}")
 
         # Update tower status based on system health (only if state changed)
-        current_state = (total_yellow_indicators, total_red_indicators, communication_failure_detected)
+        warning_detected = len(warning_nodes) > 0
+        current_state = (confirmed_sensor_failure_detected, communication_failure_detected, warning_detected)
         if current_state != self.last_tower_state:
-            self.actualizar_torreta(total_yellow_indicators, total_red_indicators, communication_failure_detected)
+            self.actualizar_torreta(confirmed_sensor_failure_detected, communication_failure_detected, warning_detected)
             self.last_tower_state = current_state
         
         # Update buzzer independently (called every 1 second)
         self.actualizar_buzzer()
 
-        if total_red_indicators >= 2 or communication_failure_detected:
-            self.activar_alerta("FALLA SISTEMA")
+        if confirmed_sensor_failure_detected or communication_failure_detected:
+            self.activar_alerta("SYSTEM FAULT")
         else:
             self.limpiar_alerta()
+
+        failing_nodes = sorted(set(failing_nodes))
+        warning_nodes = sorted(set(node_id for node_id in warning_nodes if node_id not in failing_nodes))
+        if failing_nodes:
+            legend_text = "Faulted nodes: " + ", ".join([f"Node-{device_id}" for device_id in failing_nodes])
+            self.lbl_fault_legend.config(text=legend_text, fg="#ff8a80")
+        elif warning_nodes:
+            legend_text = "Warning nodes: " + ", ".join([f"Node-{device_id}" for device_id in warning_nodes])
+            self.lbl_fault_legend.config(text=legend_text, fg="#ffd166")
+        else:
+            self.lbl_fault_legend.config(text="Status: ALL OK", fg="#d9f99d")
         
         # Schedule next update
         self.root.after(1000, self.actualizar_datos_dispositivos)
 
     def mostrar_imagen_layout(self):
         if not self.img_layout_full:
-            messagebox.showwarning("Error", "No se encontró el mapa WALL-E HMI images/Bimbo.png")
+            messagebox.showwarning("Error", "Map image not found: WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
+            return
+        if self.toggle_window('map_window') is None:
             return
         
         # Create a new window for the map
         top = tk.Toplevel(self.root)
-        top.title("Mapa de Planta - Wall-E")
-        top.geometry("500x750")
+        self.map_window = top
+        top.title("Plant Map - Wall-E")
+        top.geometry("450x650")
         top.configure(bg="#222222")
         top.resizable(True, True)
         
@@ -1047,18 +1632,30 @@ class AppIndustrial:
         frame_btn = tk.Frame(top, bg="#222222")
         frame_btn.pack(side="bottom", fill="x", padx=10, pady=10)
         
-        tk.Button(frame_btn, text="CERRAR", command=top.destroy, bg="red", fg="white", 
+        close_map = self.register_window_close(top, lambda: setattr(self, 'map_window', None))
+        tk.Button(frame_btn, text="CLOSE", command=close_map, bg="red", fg="white", 
                  font=("Arial", 10, "bold"), width=20).pack(pady=5)
 
     def mostrar_detalle_lamparas(self, device_id):
         """Open a window showing per-lamp UV status for a device"""
+        if self.toggle_detail_window(device_id) is None:
+            return
+
         top = tk.Toplevel(self.root)
-        top.title(f"Detalle Corriente Activa - W-{device_id}")
+        self.detail_windows[device_id] = top
+        top.title(f"Current Status - Node-{device_id}")
         top.geometry("420x320")
         top.configure(bg="#1a1a1a")
 
-        tk.Label(top, text=f"W-{device_id} - Estado Corriente (CH1 y CH2)",
+        tk.Label(top, text=f"Node-{device_id} - {get_node_model(device_id)}",
                  font=("Arial", 12, "bold"), bg="#1a1a1a", fg="#00ff00").pack(pady=10)
+
+        if is_node_in_maintenance(device_id):
+            tk.Label(top, text="Node is in maintenance mode. Alerts are disabled.",
+                     bg="#1a1a1a", fg="#ffb347", font=("Arial", 10, "bold")).pack(pady=(0, 8))
+
+        pressure_status_text = "No pressure data available."
+        pressure_status_color = "#9ca3af"
 
         frame = tk.Frame(top, bg="#1a1a1a")
         frame.pack(expand=True, fill="both", padx=10, pady=10)
@@ -1067,11 +1664,22 @@ class AppIndustrial:
             data = shared_device_data.get(device_id)
 
         if not data:
-            tk.Label(frame, text="Sin datos del nodo.", bg="#1a1a1a", fg="white").pack(pady=10)
+            tk.Label(frame, text="No data from node.", bg="#1a1a1a", fg="white").pack(pady=10)
         else:
+            pressure_status = evaluate_pressure_status(device_id, data.get('pressure_value', 0))
+            pressure_status_text = pressure_status['label']
+            pressure_status_color = pressure_status['color']
+
+            tk.Label(frame,
+                     text=f"Pressure: {pressure_status['short_label']}",
+                     font=("Arial", 10, "bold"), bg="#1a1a1a", fg="white").pack(pady=(0, 6))
+            tk.Label(frame,
+                     text=pressure_status_text,
+                     font=("Arial", 10, "bold"), bg="#1a1a1a", fg=pressure_status_color).pack(pady=(0, 8))
+
             currents = [
-                ("CH1 lámparas UV 1 y 2", data.get('curr1_mA', 0)),
-                ("CH2 lámparas UV 3 y 4", data.get('curr3_mA', 0)),
+                ("CH1 UV Lamps 1 & 2", data.get('curr1_mA', 0)),
+                ("CH2 UV Lamps 3 & 4", data.get('curr3_mA', 0)),
             ]
 
             for channel_name, curr in currents:
@@ -1088,7 +1696,8 @@ class AppIndustrial:
                          font=("Arial", 10), bg="#1a1a1a", fg="white").pack(side="left")
                 tk.Label(row, text=description, font=("Arial", 10, "bold"), bg="#1a1a1a", fg=color).pack(side="right")
 
-        tk.Button(top, text="CERRAR", command=top.destroy, bg="red", fg="white",
+        close_detail = self.register_window_close(top, lambda: self.detail_windows.pop(device_id, None))
+        tk.Button(top, text="CLOSE", command=close_detail, bg="red", fg="white",
                   font=("Arial", 10, "bold"), width=20).pack(pady=10)
 
     def activar_alerta(self, msg):
@@ -1107,11 +1716,10 @@ class AppIndustrial:
             pass
 
     def reset(self):
-        """Reset alerts and re-enable sound"""
+        """Re-enable sound"""
         self.sonido_habil = True
-        self.limpiar_alerta()
-        print("[RESET] Alertas limpiadas y sonido re-habilitado")
-        self.registrar_log("Reset manual - Sonido re-habilitado")
+        print("[SOUND] Sound re-enabled")
+        self.registrar_log("Sound re-enabled")
 
     def registrar_log(self, info):
         try:
@@ -1121,16 +1729,20 @@ class AppIndustrial:
             print(f"Log write error: {e}")
 
     def abrir_historial(self):
+        if self.toggle_window('logs_window') is None:
+            return
+
         # Create a new window for logs
         pop = tk.Toplevel(self.root)
-        pop.title("Historial de Eventos - Wall-E")
-        pop.geometry("500x600")
+        self.logs_window = pop
+        pop.title("Event History - Wall-E")
+        pop.geometry("350x450")
         pop.resizable(True, True)
         
         # Frame for title
         frame_title = tk.Frame(pop, bg="#1a1a1a", height=40)
         frame_title.pack(fill="x")
-        tk.Label(frame_title, text="ÚLTIMOS EVENTOS", font=("Arial", 12, "bold"), 
+        tk.Label(frame_title, text="RECENT EVENTS", font=("Arial", 12, "bold"), 
                 bg="#1a1a1a", fg="#00ff00").pack(pady=5)
         
         # Frame for text and scrollbar
@@ -1153,7 +1765,7 @@ class AppIndustrial:
                 content = "".join(reversed(logs))
                 txt.insert("1.0", content)
         except:
-            txt.insert("1.0", "No hay registros previos.")
+            txt.insert("1.0", "No previous records.")
         
         txt.config(state="disabled")  # Make it read-only
         
@@ -1161,19 +1773,20 @@ class AppIndustrial:
         frame_btn = tk.Frame(pop, bg="#1a1a1a", height=50)
         frame_btn.pack(fill="x", padx=5, pady=5)
         
-        tk.Button(frame_btn, text="CERRAR", command=pop.destroy, bg="red", fg="white",
+        close_logs = self.register_window_close(pop, lambda: setattr(self, 'logs_window', None))
+        tk.Button(frame_btn, text="CLOSE", command=close_logs, bg="red", fg="white",
                  font=("Arial", 10, "bold"), width=20).pack(side="left", padx=5)
-        tk.Button(frame_btn, text="LIMPIAR LOGS", command=self.limpiar_logs, bg="orange", fg="white",
+        tk.Button(frame_btn, text="CLEAR LOGS", command=self.limpiar_logs, bg="orange", fg="white",
                  font=("Arial", 10, "bold"), width=20).pack(side="left", padx=5)
     
     def limpiar_logs(self):
         """Clear the security log file"""
         try:
             with open("log_seguridad.csv", "w") as f:
-                f.write("Logs limpiados el {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            messagebox.showinfo("Éxito", "Logs limpiados correctamente")
+                f.write("Logs cleared on {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            messagebox.showinfo("Success", "Logs cleared successfully")
         except Exception as e:
-            messagebox.showerror("Error", f"Error al limpiar logs: {e}")
+            messagebox.showerror("Error", f"Error clearing logs: {e}")
 
 # ============================================================================
 # COORDINATOR THREAD
@@ -1211,9 +1824,11 @@ def coordinator_loop():
                     
                 except Exception as e:
                     print(f"[WARNING] Error during hard reset: {e}")
+
+                synchronize_runtime_state()
                 
                 # Query all devices
-                for device_id in range(1, NUM_DEVICES + 1):
+                for device_id in get_active_device_ids():
                     response = query_device(device_id)
                     
                     # Update shared data structure (thread-safe)
@@ -1230,7 +1845,7 @@ def coordinator_loop():
                 
                 # Print device statistics
                 print(f"\nDevice Statistics:")
-                for device_id in range(1, NUM_DEVICES + 1):
+                for device_id in range(1, get_configured_node_count() + 1):
                     if device_id in device_stats:
                         stats = device_stats[device_id]
                         success_rate = (stats['responses'] * 100) / (stats['responses'] + stats['failures']) if (stats['responses'] + stats['failures']) > 0 else 0
@@ -1253,7 +1868,15 @@ def coordinator_loop():
 
 def main():
     """Main entry point - initializes hardware and launches HMI + coordinator"""
-    global coordinator_running, coordinator_thread
+    global coordinator_running, coordinator_thread, restart_requested
+
+    load_system_config()
+
+    configured_count = get_configured_node_count()
+
+    if not (MIN_DEVICE_ID <= configured_count <= MAX_DEVICE_ID):
+        print(f"✗ Invalid node count={configured_count}. Valid range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
+        return 1
     
     print("="*70)
     if DEMO_MODE:
@@ -1262,7 +1885,8 @@ def main():
         print("          Wall-E Coordinator with HMI - Starting Up")
     print("="*70)
     print(f"Configuration:")
-    print(f"  - Number of devices: {NUM_DEVICES}")
+    print(f"  - Number of devices: {configured_count}")
+    print(f"  - Supported ID range: {MIN_DEVICE_ID}-{MAX_DEVICE_ID}")
     if DEMO_MODE:
         print(f"  - Demo update interval: {DEMO_UPDATE_INTERVAL} seconds")
     else:
@@ -1284,16 +1908,19 @@ def main():
         print("✓ Demo mode enabled - using simulated data")
     
     print("\n✓ System ready. Starting coordinator and HMI...")
-    
-    # Start coordinator thread
-    coordinator_running = True
-    coordinator_thread = threading.Thread(target=coordinator_loop, daemon=True)
-    coordinator_thread.start()
-    
+
     # Launch HMI (runs in main thread)
     try:
         root = tk.Tk()
         app = AppIndustrial(root)
+
+        if not root.winfo_exists() or getattr(app, 'initialization_aborted', False):
+            print("⚠ HMI closed during initial setup")
+            return 0
+
+        coordinator_running = True
+        coordinator_thread = threading.Thread(target=coordinator_loop, daemon=True)
+        coordinator_thread.start()
         
         print("\n✓ HMI launched. Coordinator running in background.")
         if DEMO_MODE:
@@ -1317,11 +1944,22 @@ def main():
         
         if not DEMO_MODE:
             try:
-                spi.close()
-                GPIO.cleanup()
+                if spi is not None:
+                    spi.close()
+                if GPIO is not None:
+                    GPIO.cleanup()
                 print("✓ Resources cleaned up")
             except Exception as e:
                 print(f"⚠ Cleanup warning: {e}")
+
+        if restart_requested:
+            try:
+                restart_requested = False
+                cmd = [sys.executable] + sys.argv
+                subprocess.Popen(cmd, cwd=os.getcwd())
+                print("✓ Reinicio de programa solicitado: nueva instancia iniciada")
+            except Exception as e:
+                print(f"✗ No se pudo reiniciar el programa automaticamente: {e}")
         
         print("✓ Exited successfully\n")
     
