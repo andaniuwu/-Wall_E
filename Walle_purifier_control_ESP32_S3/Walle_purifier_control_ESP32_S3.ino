@@ -1685,7 +1685,7 @@ void checkLoRaPackets() {
         // Scale measurements to 8-bit format for transmission
         uint8_t pressure_scaled = pressureSensorReady ? scale_pressure(pressure_diff_pa_filtered) : 0;
         uint8_t curr1_scaled = scale_current(current_sensor1_A * 1000.0);  // Convert A to mA
-        uint8_t curr3_scaled = scale_current(current_sensor2_A * 1000.0);
+        uint8_t curr2_scaled = scale_current(current_sensor2_A * 1000.0);
 
         // Espera aleatoria
         delay(random(10, 80));
@@ -1694,7 +1694,7 @@ void checkLoRaPackets() {
         neopixel.setPixelColor(0, COLOR_CYAN);
         neopixel.show();
 
-        // Fixed 10-byte response: pressure, two active currents in slots 1 and 3.
+        // Fixed 10-byte response: pressure and two active currents in slots 1 and 2.
         LoRa.beginPacket();
         LoRa.write(NET_ID);                           // Echo network ID
         LoRa.write(MSG_RESP);                         // Message type: Response (0x90)
@@ -1703,8 +1703,8 @@ void checkLoRaPackets() {
         LoRa.write((uint8_t)((seq >> 8) & 0xFF));     // Sequence number (high byte)
         LoRa.write(pressure_scaled);                  // Scaled differential pressure (0-255 = 0-130 Pa)
         LoRa.write(curr1_scaled);                     // Scaled current 1 (0-255 = 0-2550 mA)
-        LoRa.write((uint8_t)0);                       // Current 2 unused
-        LoRa.write(curr3_scaled);                     // Scaled current 3 (0-255 = 0-2550 mA)
+        LoRa.write(curr2_scaled);                     // Scaled current 2 (0-255 = 0-2550 mA)
+        LoRa.write((uint8_t)0);                       // Current 3 unused
         LoRa.write((uint8_t)0);                       // Current 4 unused
         LoRa.endPacket();
         LoRa.receive(); // Ensure radio returns to RX mode
@@ -1714,10 +1714,10 @@ void checkLoRaPackets() {
 
         // Debug output
         Serial.printf("[Device %d] Response sent (Seq=%d): ", TX_ID, seq-1);
-        Serial.printf("P=%.1fPa(%d) CURR1=%.2fA(%d) CURR3=%.2fA(%d)\n",
+        Serial.printf("P=%.1fPa(%d) CURR1=%.2fA(%d) CURR2=%.2fA(%d)\n",
           pressure_diff_pa_filtered, pressure_scaled,
           current_sensor1_A, curr1_scaled,
-          current_sensor2_A, curr3_scaled);
+          current_sensor2_A, curr2_scaled);
 
         // Fin de envío: verde
         neopixel.setPixelColor(0, COLOR_GREEN);

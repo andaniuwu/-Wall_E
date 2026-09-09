@@ -19,7 +19,7 @@ PROTOCOL:
     Request: [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
     Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | PRESSURE_SCALED | CURR1 | CURR2 | CURR3 | CURR4]
                      where scaled values: 0-255 = pressure 0-130 Pa, current 0-2550 mA per channel.
-                     The shared two-sensor firmware uses CURR1 and CURR3; CURR2 and CURR4 are zero.
+                     The shared two-sensor firmware uses CURR1 and CURR2; CURR3 and CURR4 are zero.
 
 HARDWARE:
   - LoRa module: SX1278 on 433MHz
@@ -645,12 +645,12 @@ def has_sensor_error(response):
     pressure = response.get('pressure_value', 0.0)
     device_id = response.get('device_id', 0)
     curr1 = response.get('curr1_mA', 0.0)
-    curr3 = response.get('curr3_mA', 0.0)
+    curr2 = response.get('curr2_mA', 0.0)
 
     pressure_status = evaluate_pressure_status(device_id, pressure)
     current_error = (
         curr1 < CURRENT_FAULT_THRESHOLD or curr1 > CURRENT_MAX or
-        curr3 < CURRENT_FAULT_THRESHOLD or curr3 > CURRENT_MAX
+        curr2 < CURRENT_FAULT_THRESHOLD or curr2 > CURRENT_MAX
     )
     return pressure_status['fault'] or current_error
 
@@ -660,9 +660,9 @@ def evaluate_pressure_status(device_id, pressure_value):
 
     if model == NODE_MODEL_UV_ONLY:
         return {
-            'state': 'DISABLED',
-            'label': 'PRESSURE DISABLED',
-            'short_label': 'DISABLED',
+            'state': 'NOT_EQUIPPED',
+            'label': 'PRESSURE NOT EQUIPPED',
+            'short_label': 'NOT EQUIPPED',
             'color': '#9ca3af',
             'warning': False,
             'fault': False,
@@ -1085,7 +1085,8 @@ class AppIndustrial:
 
     def rebuild_node_grid(self):
         configured_count = get_configured_node_count()
-        self.total_pages = max(1, (configured_count + NODES_PER_PAGE - 1) // NODES_PER_PAGE)
+        node_pages = max(1, (configured_count + NODES_PER_PAGE - 1) // NODES_PER_PAGE)
+        self.total_pages = node_pages + 1
         self.current_page = min(self.current_page, self.total_pages - 1)
 
         for widget in self.container.winfo_children():
@@ -1098,6 +1099,22 @@ class AppIndustrial:
         self.model_labels = []
         self.mode_labels = []
 
+        self.overview_frame = tk.Frame(self.container, bg="#3a2a7a")
+        self.overview_frame.grid(row=0, column=0, columnspan=HMI_GRID_COLUMNS, sticky="nsew", padx=8, pady=8)
+        tk.Label(self.overview_frame, text="SYSTEM STATUS", font=("Arial", 15, "bold"),
+             bg="#3a2a7a", fg="white").pack(pady=(18, 8))
+        self.overview_indicator = tk.Canvas(self.overview_frame, width=150, height=150,
+                            bg="#3a2a7a", highlightthickness=0)
+        self.overview_indicator.pack(pady=4)
+        self.overview_circle = self.overview_indicator.create_oval(15, 15, 135, 135,
+                                        fill="#555555", outline="white", width=3)
+        self.overview_status = tk.Label(self.overview_frame, text="WAITING FOR DATA", font=("Arial", 16, "bold"),
+                        bg="#3a2a7a", fg="white")
+        self.overview_status.pack(pady=(8, 2))
+        self.overview_detail = tk.Label(self.overview_frame, text="", font=("Arial", 9, "bold"),
+                        bg="#3a2a7a", fg="#d9f99d", wraplength=400, justify="center")
+        self.overview_detail.pack(pady=(0, 18))
+
         for device_id in range(1, configured_count + 1):
             frame = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
             pos_in_page = (device_id - 1) % NODES_PER_PAGE
@@ -1105,7 +1122,7 @@ class AppIndustrial:
             col = pos_in_page % HMI_GRID_COLUMNS
             frame.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
             frame.device_id = device_id
-            frame.page_num = (device_id - 1) // NODES_PER_PAGE
+            frame.page_num = (device_id - 1) // NODES_PER_PAGE + 1
             self.frames_robot.append(frame)
 
             tk.Label(frame, text=f"Node-{device_id}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
@@ -1329,6 +1346,10 @@ class AppIndustrial:
     
     def refresh_page(self):
         """Update visibility of frames based on current page"""
+        if self.current_page == 0:
+            self.overview_frame.grid()
+        else:
+            self.overview_frame.grid_remove()
         for f in self.frames_robot:
             if f.page_num == self.current_page:
                 f.grid()
@@ -1336,9 +1357,30 @@ class AppIndustrial:
                 f.grid_remove()
         
         # Update page label
-        start_device = self.current_page * NODES_PER_PAGE + 1
-        end_device = min((self.current_page + 1) * NODES_PER_PAGE, get_configured_node_count())
-        self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (Node-{start_device} to Node-{end_device})")
+        if self.current_page == 0:
+            self.lbl_page.config(text=f"Overview | Page 1 of {self.total_pages}")
+        else:
+            start_device = (self.current_page - 1) * NODES_PER_PAGE + 1
+            end_device = min(self.current_page * NODES_PER_PAGE, get_configured_node_count())
+            self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (Node-{start_device} to Node-{end_device})")
+
+    def update_system_overview(self, failing_nodes, filter_nodes):
+        if failing_nodes:
+            color = "#e74c3c"
+            status = "SYSTEM ERROR"
+            detail = "Failed nodes: " + ", ".join(f"Node-{device_id}" for device_id in failing_nodes)
+        elif filter_nodes:
+            color = "#f1c40f"
+            status = "FILTER SERVICE"
+            detail = "Filter service: " + ", ".join(f"Node-{device_id}" for device_id in filter_nodes)
+        else:
+            color = "#2ecc71"
+            status = "ALL SYSTEMS OK"
+            detail = "All configured nodes are operating normally."
+
+        self.overview_indicator.itemconfig(self.overview_circle, fill=color)
+        self.overview_status.config(text=status, fg=color)
+        self.overview_detail.config(text=detail, fg=color)
     
     def actualizar_estado_escaneo(self):
         """Update scanning device status"""
@@ -1466,6 +1508,7 @@ class AppIndustrial:
         communication_failure_detected = False
         failing_nodes = []
         warning_nodes = []
+        filter_nodes = []
 
         try:
             with device_data_lock:
@@ -1491,12 +1534,12 @@ class AppIndustrial:
                         # Extract sensor values
                         pressure = data.get('pressure_value', 0)
                         curr1 = data.get('curr1_mA', 0)
-                        curr3 = data.get('curr3_mA', 0)
+                        curr2 = data.get('curr2_mA', 0)
                         pressure_status = evaluate_pressure_status(device_id, pressure)
                         
                         current_status = [
                             self.classify_current_status(curr1),
-                            self.classify_current_status(curr3),
+                            self.classify_current_status(curr2),
                         ]
 
                         # Confirmed sensor error only after MAX_CONSECUTIVE_FAILURES reads per node
@@ -1518,6 +1561,8 @@ class AppIndustrial:
                         elif pressure_status['warning']:
                             if device_id not in warning_nodes:
                                 warning_nodes.append(device_id)
+                            if device_id not in filter_nodes:
+                                filter_nodes.append(device_id)
                         current_fault_detected = any(status_code == "RED" for status_code, _, _ in current_status)
                         current_warning_detected = any(status_code == "YELLOW" for status_code, _, _ in current_status)
                         if current_fault_detected:
@@ -1593,6 +1638,8 @@ class AppIndustrial:
 
         failing_nodes = sorted(set(failing_nodes))
         warning_nodes = sorted(set(node_id for node_id in warning_nodes if node_id not in failing_nodes))
+        filter_nodes = sorted(set(node_id for node_id in filter_nodes if node_id not in failing_nodes))
+        self.update_system_overview(failing_nodes, filter_nodes)
         if failing_nodes:
             legend_text = "Faulted nodes: " + ", ".join([f"Node-{device_id}" for device_id in failing_nodes])
             self.lbl_fault_legend.config(text=legend_text, fg="#ff8a80")
@@ -1679,7 +1726,7 @@ class AppIndustrial:
 
             currents = [
                 ("CH1 UV Lamps 1 & 2", data.get('curr1_mA', 0)),
-                ("CH2 UV Lamps 3 & 4", data.get('curr3_mA', 0)),
+                ("CH2 UV Lamps 3 & 4", data.get('curr2_mA', 0)),
             ]
 
             for channel_name, curr in currents:
