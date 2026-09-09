@@ -16,9 +16,10 @@ for the Wall-E monitoring system. It:
 4. Alerts on status changes or communication failures
 
 PROTOCOL:
-  Request: [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
-  Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | AC_V_SCALED | CURR1_mA | CURR2_mA | CURR3_mA | CURR4_mA]
-           where scaled values: 0-255 = voltage 0-130V RMS, current 0-2550 mA per channel
+    Request: [NET_ID | MSG_REQ | TARGET_ID | REQ_CODE]
+    Response: [NET_ID | MSG_RESP | DEVICE_ID | SEQ_LO | SEQ_HI | PRESSURE_SCALED | CURR1 | CURR2 | CURR3 | CURR4]
+                     where scaled values: 0-255 = pressure 0-130 Pa, current 0-2550 mA per channel.
+                     The shared two-sensor firmware uses CURR1 and CURR3; CURR2 and CURR4 are zero.
 
 HARDWARE:
   - LoRa module: SX1278 on 433MHz
