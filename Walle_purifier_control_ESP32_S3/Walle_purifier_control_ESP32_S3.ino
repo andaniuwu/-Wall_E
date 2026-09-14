@@ -224,9 +224,9 @@ ADJUSTMENTS PER INSTALLATION:
 #define OLED_UPDATE_INTERVAL_MS      200UL
 #define PRESSURE_USE_ABS_FOR_FILTER  true
 
-const float FILTER_DP_SOON_PA = 20.0f;          // Warning threshold: filter is getting obstructed
+const float FILTER_DP_SOON_PA = 19.0f;          // MARK warning threshold: filter is getting obstructed
 const float FILTER_DP_MAINTENANCE_PA = 30.0f;   // Maintenance threshold requested by user
-const float FAN_ERROR_DP_LOW_PA = 10.0f;        // Fan-flow error when differential pressure is too low
+const float FAN_ERROR_DP_LOW_PA = 6.0f;         // Low-flow warning when differential pressure is too low
 
 // ---- L298N H-Bridge Motor Driver ----
 // ENA and ENB: leave the JUMPER installed on the L298N board.
@@ -1006,9 +1006,8 @@ void updateOLED() {
     const bool lampError = (current_sensor1_A < TOWER_CURRENT_THRESHOLD_A) ||
                            (current_sensor2_A < TOWER_CURRENT_THRESHOLD_A);
     const bool fanError = pressureSensorReady && (pressure_diff_pa_filtered < FAN_ERROR_DP_LOW_PA);
-    const bool pressureOrFilterError = (!pressureSensorReady) ||
-                                       (filterState == FILTER_STATE_MAINTENANCE_REQUIRED);
-    const bool showErrorBitmap = lampError || pressureOrFilterError || fanError;
+    const bool pressureSensorError = !pressureSensorReady;
+    const bool showErrorBitmap = lampError || pressureSensorError;
 
     if (!showErrorBitmap) {
       display.drawBitmap(0, 0, bmp_purifier_ok, 128, 56, SSD1306_WHITE);
@@ -1053,8 +1052,6 @@ void updateOLED() {
       // Diagnostic view
       uint8_t errorCount = 0;
       if (!pressureSensorReady) errorCount++;
-      if (fanError) errorCount++;
-      if (filterState == FILTER_STATE_MAINTENANCE_REQUIRED) errorCount++;
       if (lampError) errorCount++;
 
       if (errorCount > 0) {
@@ -1070,24 +1067,14 @@ void updateOLED() {
           }
           cursor++;
         }
-        if (fanError) {
-          if (cursor == selected) {
-            display.print("ERR: VENTILADOR");
-          }
-          cursor++;
-        }
-        if (filterState == FILTER_STATE_MAINTENANCE_REQUIRED) {
-          if (cursor == selected) {
-            display.print("ERR: FILTRO");
-          }
-          cursor++;
-        }
         if (lampError) {
           if (cursor == selected) {
             display.print("ERR: LAMPARA");
           }
         }
-      } else if (filterState == FILTER_STATE_SOON) {
+      } else if (fanError) {
+        display.print("AVISO: FLUJO");
+      } else if (filterState != FILTER_STATE_OK) {
         display.print("AVISO: FILTRO");
       } else {
         display.print("ESTADO: OK");
@@ -1959,13 +1946,10 @@ void loop() {
 #endif
 
   // Tower control logic:
-  // OK only when currents are present and pressure/filter are healthy.
-  // Error if lamp has no current, pressure sensor fails, or filter requires maintenance.
+  // Pressure and filter deviations are warnings; only current loss or a sensor failure turns the local tower red.
   const bool currentsOk = areActiveCurrentsAboveTowerThreshold();
   const bool pressureOk = pressureSensorReady;
-  const bool fanFlowOk = (!pressureSensorReady) ? false : (pressure_diff_pa_filtered >= FAN_ERROR_DP_LOW_PA);
-  const bool filterOk = (filterState != FILTER_STATE_MAINTENANCE_REQUIRED);
-  const bool systemOk = currentsOk && pressureOk && fanFlowOk && filterOk;
+  const bool systemOk = currentsOk && pressureOk;
   const TowerState requestedTowerState = systemOk ? TOWER_STATE_GREEN : TOWER_STATE_RED;
 
   if (requestedTowerState != currentTowerState) {

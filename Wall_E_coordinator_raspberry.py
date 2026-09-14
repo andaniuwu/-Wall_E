@@ -144,9 +144,8 @@ RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
 
 # HMI THRESHOLDS
-PRESSURE_OK_MIN = 11.0             # Minimum pressure considered OK (Pa)
-PRESSURE_ERROR_MIN = 5.0           # Below this pressure the node is in pressure error (Pa)
-PRESSURE_MARK_FILTER_DIRTY = 20.0  # MARK purifier filter cleaning threshold (Pa)
+PRESSURE_OK_MIN = 6.0              # Minimum pressure considered OK (Pa)
+PRESSURE_MARK_FILTER_DIRTY = 19.0  # MARK purifier filter cleaning threshold (Pa)
 PRESSURE_MOLDEX_FILTER_DIRTY = 30.0  # MOLDEX purifier filter cleaning threshold (Pa)
 PRESSURE_SCALE_MAX = 130.0         # Telemetry scaling max for pressure byte
 CURRENT_VISUAL_ON_THRESHOLD = 30.0  # Current above this value is shown as functionally active
@@ -642,17 +641,14 @@ def parse_response(packet, device_id):
 
 def has_sensor_error(response):
     """Return True when a node reading is in error according to direct thresholds."""
-    pressure = response.get('pressure_value', 0.0)
-    device_id = response.get('device_id', 0)
     curr1 = response.get('curr1_mA', 0.0)
     curr2 = response.get('curr2_mA', 0.0)
 
-    pressure_status = evaluate_pressure_status(device_id, pressure)
     current_error = (
-        curr1 < CURRENT_FAULT_THRESHOLD or curr1 > CURRENT_MAX or
-        curr2 < CURRENT_FAULT_THRESHOLD or curr2 > CURRENT_MAX
+        curr1 < CURRENT_VISUAL_ON_THRESHOLD or curr1 > CURRENT_MAX or
+        curr2 < CURRENT_VISUAL_ON_THRESHOLD or curr2 > CURRENT_MAX
     )
-    return pressure_status['fault'] or current_error
+    return current_error
 
 
 def evaluate_pressure_status(device_id, pressure_value):
@@ -668,24 +664,14 @@ def evaluate_pressure_status(device_id, pressure_value):
             'fault': False,
         }
 
-    if pressure_value < PRESSURE_ERROR_MIN:
-        return {
-            'state': 'ERROR',
-            'label': 'PRESSURE ERROR',
-            'short_label': f'{pressure_value:.1f} Pa',
-            'color': '#e74c3c',
-            'warning': False,
-            'fault': True,
-        }
-
     if pressure_value < PRESSURE_OK_MIN:
         return {
-            'state': 'LOW',
-            'label': 'LOW PRESSURE',
+            'state': 'LOW_FLOW',
+            'label': 'LOW PRESSURE: CHECK FANS OR FILTER',
             'short_label': f'{pressure_value:.1f} Pa',
             'color': '#f59e0b',
-            'warning': False,
-            'fault': True,
+            'warning': True,
+            'fault': False,
         }
 
     if model == NODE_MODEL_PURIFIER_MARK and pressure_value > PRESSURE_MARK_FILTER_DIRTY:
@@ -1113,7 +1099,18 @@ class AppIndustrial:
         self.overview_status.pack(pady=(8, 2))
         self.overview_detail = tk.Label(self.overview_frame, text="", font=("Arial", 9, "bold"),
                         bg="#3a2a7a", fg="#d9f99d", wraplength=400, justify="center")
-        self.overview_detail.pack(pady=(0, 18))
+        self.overview_detail.pack(pady=(0, 10))
+        self.overview_pressure_status = tk.Label(self.overview_frame, text="PRESSURE: WAITING FOR DATA",
+                                                  font=("Arial", 10, "bold"), bg="#2a1a5a", fg="white",
+                                                  wraplength=400, justify="center")
+        self.overview_pressure_status.pack(fill="x", padx=14, pady=(2, 4))
+        self.overview_pressure_legend = tk.Label(
+            self.overview_frame,
+            text=(f"Below {PRESSURE_OK_MIN:.0f} Pa: check fans or purifier filter. "
+                  f"Above {PRESSURE_MARK_FILTER_DIRTY:.0f} Pa (MARK) or "
+                  f"{PRESSURE_MOLDEX_FILTER_DIRTY:.0f} Pa (MOLDEX): clean filter."),
+            font=("Arial", 8), bg="#3a2a7a", fg="#ffd166", wraplength=400, justify="center")
+        self.overview_pressure_legend.pack(padx=14, pady=(0, 18))
 
         for device_id in range(1, configured_count + 1):
             frame = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
@@ -1364,15 +1361,15 @@ class AppIndustrial:
             end_device = min(self.current_page * NODES_PER_PAGE, get_configured_node_count())
             self.lbl_page.config(text=f"Page {self.current_page + 1} of {self.total_pages} (Node-{start_device} to Node-{end_device})")
 
-    def update_system_overview(self, failing_nodes, filter_nodes):
+    def update_system_overview(self, failing_nodes, pressure_warning_nodes, low_pressure_nodes, filter_nodes):
         if failing_nodes:
             color = "#e74c3c"
             status = "SYSTEM ERROR"
             detail = "Failed nodes: " + ", ".join(f"Node-{device_id}" for device_id in failing_nodes)
-        elif filter_nodes:
+        elif pressure_warning_nodes:
             color = "#f1c40f"
-            status = "FILTER SERVICE"
-            detail = "Filter service: " + ", ".join(f"Node-{device_id}" for device_id in filter_nodes)
+            status = "PRESSURE WARNING"
+            detail = "Check pressure alerts below."
         else:
             color = "#2ecc71"
             status = "ALL SYSTEMS OK"
@@ -1381,6 +1378,15 @@ class AppIndustrial:
         self.overview_indicator.itemconfig(self.overview_circle, fill=color)
         self.overview_status.config(text=status, fg=color)
         self.overview_detail.config(text=detail, fg=color)
+        pressure_messages = []
+        if low_pressure_nodes:
+            pressure_messages.append("LOW: " + ", ".join(f"Node-{device_id}" for device_id in low_pressure_nodes))
+        if filter_nodes:
+            pressure_messages.append("CLEAN FILTER: " + ", ".join(f"Node-{device_id}" for device_id in filter_nodes))
+        if pressure_messages:
+            self.overview_pressure_status.config(text=" | ".join(pressure_messages), fg="#ffd166")
+        else:
+            self.overview_pressure_status.config(text="PRESSURE: ALL PURIFIERS IN RANGE", fg="#d9f99d")
     
     def actualizar_estado_escaneo(self):
         """Update scanning device status"""
@@ -1508,6 +1514,7 @@ class AppIndustrial:
         communication_failure_detected = False
         failing_nodes = []
         warning_nodes = []
+        low_pressure_nodes = []
         filter_nodes = []
 
         try:
@@ -1561,7 +1568,9 @@ class AppIndustrial:
                         elif pressure_status['warning']:
                             if device_id not in warning_nodes:
                                 warning_nodes.append(device_id)
-                            if device_id not in filter_nodes:
+                            if pressure_status['state'] == 'LOW_FLOW' and device_id not in low_pressure_nodes:
+                                low_pressure_nodes.append(device_id)
+                            elif pressure_status['state'] == 'FILTER' and device_id not in filter_nodes:
                                 filter_nodes.append(device_id)
                         current_fault_detected = any(status_code == "RED" for status_code, _, _ in current_status)
                         current_warning_detected = any(status_code == "YELLOW" for status_code, _, _ in current_status)
@@ -1580,7 +1589,7 @@ class AppIndustrial:
                         color_v = pressure_status['color']
                         
                         self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill=color_v)
-                        # Update active current indicators (CH1 and CH3)
+                        # Update active current indicators (CH1 and CH2)
                         for lamp_i, (_, lamp_color, _) in enumerate(current_status):
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
                         label_color = "white" if pressure_status['state'] == 'OK' else pressure_status['color']
@@ -1638,8 +1647,9 @@ class AppIndustrial:
 
         failing_nodes = sorted(set(failing_nodes))
         warning_nodes = sorted(set(node_id for node_id in warning_nodes if node_id not in failing_nodes))
+        low_pressure_nodes = sorted(set(node_id for node_id in low_pressure_nodes if node_id not in failing_nodes))
         filter_nodes = sorted(set(node_id for node_id in filter_nodes if node_id not in failing_nodes))
-        self.update_system_overview(failing_nodes, filter_nodes)
+        self.update_system_overview(failing_nodes, warning_nodes, low_pressure_nodes, filter_nodes)
         if failing_nodes:
             legend_text = "Faulted nodes: " + ", ".join([f"Node-{device_id}" for device_id in failing_nodes])
             self.lbl_fault_legend.config(text=legend_text, fg="#ff8a80")
