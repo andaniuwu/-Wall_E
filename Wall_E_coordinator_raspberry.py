@@ -137,11 +137,21 @@ REG_PAYLOAD_LENGTH = 0x22
 NUM_DEVICES = 50                   # Number of remote nodes to poll
 MIN_DEVICE_ID = 1                  # Protocol minimum device ID
 MAX_DEVICE_ID = 255                # 1 byte in packet supports IDs up to 255
-HMI_GRID_COLUMNS = 3               # Grid columns for node cards in HMI
-NODES_PER_PAGE = 9                 # 3 cols x 3 rows per page
+HMI_GRID_COLUMNS = 2               # Readable node cards on the 720px display
+NODES_PER_PAGE = 6                 # 2 columns x 3 rows per page
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
 RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
+
+# HMI COLOR SYSTEM
+HMI_BG = "#10131b"
+HMI_SURFACE = "#191f2b"
+HMI_SURFACE_ALT = "#242c3a"
+HMI_NAV = "#151a24"
+HMI_BUTTON = "#343d50"
+HMI_BUTTON_ACTIVE = "#4a4269"
+HMI_TEXT = "#f4f6fa"
+HMI_TEXT_MUTED = "#b8c0cf"
 
 # HMI THRESHOLDS
 PRESSURE_OK_MIN = 6.0              # Minimum pressure considered OK (Pa)
@@ -917,8 +927,9 @@ class AppIndustrial:
     def __init__(self, root):
         self.root = root
         self.root.title("WALL-E MONITOR")
-        self.root.geometry("480x800")  # 7-inch touch screen (portrait) with taskbar
-        self.root.configure(bg="#483698")
+        self.root.geometry("720x1280")  # 7-inch touch screen (portrait) with taskbar
+        self.root.minsize(720, 1280)
+        self.root.configure(bg=HMI_BG)
         
         self.sonido_habil = True  
         self.falla_activa = False
@@ -941,50 +952,50 @@ class AppIndustrial:
         self.detail_windows = {}
 
         # --- HEADER (Logos, Title, Clock) ---
-        self.header = tk.Frame(self.root, bg="#483698")
-        self.header.pack(fill="x", padx=15, pady=10)
+        self.header = tk.Frame(self.root, bg=HMI_BG)
+        self.header.pack(fill="x", padx=22, pady=(18, 10))
 
         # Left frame for Bimbo logo
-        left_frame = tk.Frame(self.header, bg="#483698")
+        left_frame = tk.Frame(self.header, bg=HMI_BG)
         left_frame.pack(side="left")
         
         try:
             img_b = Image.open("WALL-E HMI images/Grupo_Bimbo.png").convert("RGBA")
-            self.photo = ImageTk.PhotoImage(img_b.resize((70, 35), Image.LANCZOS))
-            tk.Label(left_frame, image=self.photo, bg="#483698").pack()
+            self.photo = ImageTk.PhotoImage(img_b.resize((96, 48), Image.LANCZOS))
+            tk.Label(left_frame, image=self.photo, bg=HMI_BG).pack()
         except:
-            tk.Label(left_frame, text="BIMBO", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack()
+            tk.Label(left_frame, text="BIMBO", fg=HMI_TEXT, bg=HMI_BG, font=("Arial", 10, "bold")).pack()
 
         # Center frame for title and clock
-        center_frame = tk.Frame(self.header, bg="#483698")
+        center_frame = tk.Frame(self.header, bg=HMI_BG)
         center_frame.pack(side="left", expand=True, fill="both")
         
-        tk.Label(center_frame, text="UV LAMP MONITORING", font=("Arial", 10, "bold"), fg="white", bg="#483698").pack()
+        tk.Label(center_frame, text="UV LAMP MONITORING", font=("Arial", 15, "bold"), fg=HMI_TEXT, bg=HMI_BG).pack()
         
-        self.lbl_reloj = tk.Label(center_frame, text="", font=("Courier", 11, "bold"), fg="#00ff00", bg="#483698")
+        self.lbl_reloj = tk.Label(center_frame, text="", font=("Courier", 14, "bold"), fg="#2ecc71", bg=HMI_BG)
         self.lbl_reloj.pack()
         self.actualizar_hora()
 
         # Right frame for Moldex logo
-        right_frame = tk.Frame(self.header, bg="#483698")
+        right_frame = tk.Frame(self.header, bg=HMI_BG)
         right_frame.pack(side="right")
         
         try:
             img_m = Image.open("WALL-E HMI images/Moldex1.png").convert("RGBA")
-            self.photo2 = ImageTk.PhotoImage(img_m.resize((70, 35), Image.LANCZOS))
-            tk.Label(right_frame, image=self.photo2, bg="#483698").pack()
+            self.photo2 = ImageTk.PhotoImage(img_m.resize((96, 48), Image.LANCZOS))
+            tk.Label(right_frame, image=self.photo2, bg=HMI_BG).pack()
         except:
-            tk.Label(right_frame, text="MOLDEX", fg="white", bg="#483698", font=("Arial", 8, "bold")).pack()
+            tk.Label(right_frame, text="MOLDEX", fg=HMI_TEXT, bg=HMI_BG, font=("Arial", 10, "bold")).pack()
 
         # --- SCANNING STATUS ---
-        self.status_frame = tk.Frame(self.root, bg="#2a1a5a")
-        self.status_frame.pack(fill="x", padx=10, pady=2)
-        self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: Node-0", font=("Arial", 8, "bold"), 
-                                     fg="#00ff00", bg="#2a1a5a")
-        self.lbl_scanning.pack()
-        self.lbl_fault_legend = tk.Label(self.status_frame, text="Status: ALL OK", font=("Arial", 8, "bold"),
-                         fg="#d9f99d", bg="#2a1a5a", wraplength=440, justify="center")
-        self.lbl_fault_legend.pack(pady=(2, 0))
+        self.status_frame = tk.Frame(self.root, bg=HMI_NAV)
+        self.status_frame.pack(fill="x", padx=16, pady=(0, 10))
+        self.lbl_scanning = tk.Label(self.status_frame, text="Scanning: Node-0", font=("Arial", 10, "bold"),
+                         fg="#2ecc71", bg=HMI_NAV)
+        self.lbl_scanning.pack(side="left", padx=14, pady=10)
+        self.lbl_fault_legend = tk.Label(self.status_frame, text="Status: ALL OK", font=("Arial", 10, "bold"),
+                 fg="#d9f99d", bg=HMI_NAV, wraplength=420, justify="right")
+        self.lbl_fault_legend.pack(side="right", padx=14, pady=10)
 
         self.ensure_configuration_ready()
         if not self.root.winfo_exists():
@@ -997,22 +1008,24 @@ class AppIndustrial:
         self.current_page = 0
         self.total_pages = 1
         
-        self.page_frame = tk.Frame(self.root, bg="#483698")
-        self.page_frame.pack(fill="x", padx=5, pady=2)
+        self.page_frame = tk.Frame(self.root, bg=HMI_BG)
+        self.page_frame.pack(fill="x", padx=16, pady=(0, 8))
         
-        tk.Button(self.page_frame, text="◀ PREV", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
-                 command=self.pagina_anterior, width=12, height=2).pack(side="left", padx=3, pady=3)
+        tk.Button(self.page_frame, text="< PREV", font=("Arial", 11, "bold"), bg=HMI_BUTTON, fg=HMI_TEXT,
+             activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+             command=self.pagina_anterior, width=12, height=2, relief="flat").pack(side="left", padx=3, pady=3)
         
-        self.lbl_page = tk.Label(self.page_frame, text=f"Page 1 of {self.total_pages}", font=("Arial", 7, "bold"),
-                                bg="#483698", fg="#ffc72c")
+        self.lbl_page = tk.Label(self.page_frame, text=f"Page 1 of {self.total_pages}", font=("Arial", 10, "bold"),
+                    bg=HMI_BG, fg=HMI_TEXT_MUTED)
         self.lbl_page.pack(side="left", expand=True, padx=5)
         
-        tk.Button(self.page_frame, text="NEXT ▶", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black",
-                 command=self.pagina_siguiente, width=12, height=2).pack(side="right", padx=3, pady=3)
+        tk.Button(self.page_frame, text="NEXT >", font=("Arial", 11, "bold"), bg=HMI_BUTTON, fg=HMI_TEXT,
+             activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+             command=self.pagina_siguiente, width=12, height=2, relief="flat").pack(side="right", padx=3, pady=3)
 
         # --- PANEL DE ROBOTS ---
-        self.container = tk.Frame(self.root, bg="#483698")
-        self.container.pack(expand=True, fill="both", padx=2, pady=1)
+        self.container = tk.Frame(self.root, bg=HMI_BG)
+        self.container.pack(expand=True, fill="both", padx=16, pady=2)
 
         # Configurar columnas iguales
         for j in range(HMI_GRID_COLUMNS):
@@ -1021,23 +1034,19 @@ class AppIndustrial:
         self.rebuild_node_grid()
 
         # --- BOTONERA INFERIOR ---
-        self.f_btn = tk.Frame(self.root, bg="#483698")
-        self.f_btn.pack(side="bottom", fill="x", pady=1)
+        self.f_btn = tk.Frame(self.root, bg=HMI_NAV)
+        self.f_btn.pack(side="bottom", fill="x", padx=16, pady=(8, 16))
         
-        b_style = {"font": ("Arial", 7, "bold"), "bg": "#ffc72c", "height": 1, "activebackground": "#e6b422"}
+        b_style = {"font": ("Arial", 11, "bold"), "bg": HMI_BUTTON, "fg": HMI_TEXT,
+               "height": 2, "relief": "flat", "activebackground": HMI_BUTTON_ACTIVE,
+               "activeforeground": HMI_TEXT}
         
-        tk.Button(self.f_btn, text="MUTE", command=self.silenciar, **b_style).grid(row=0, column=0, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="SOUND ON", command=self.reset, **b_style).grid(row=0, column=1, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="LOGS", command=self.abrir_historial, **b_style).grid(row=0, column=2, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="MAP", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=3, sticky="we", padx=2)
-        tk.Button(self.f_btn, text="SETTINGS", command=self.open_settings_dialog, **b_style).grid(row=0, column=4, sticky="we", padx=2)
-        # tk.Button(self.f_btn, text="TEST MODE ON", command=self.test_mode_on, **b_style).grid(row=1, column=0, columnspan=2, sticky="we", padx=2, pady=2)
-        # tk.Button(self.f_btn, text="TEST MODE OFF", command=self.test_mode_off, **b_style).grid(row=1, column=2, columnspan=2, sticky="we", padx=2, pady=2)
-        
-        # Admin buttons
-        admin_style = {"font": ("Arial", 8, "bold"), "bg": "#ff6b6b", "fg": "white", "relief": "raised", "bd": 2}
-        tk.Button(self.f_btn, text="RESTART PROGRAM", command=self.reiniciar_programa, **admin_style).grid(row=1, column=0, columnspan=5, sticky="we", padx=2, pady=2)
-        self.f_btn.grid_columnconfigure((0,1,2,3,4), weight=1)
+        self.btn_sound = tk.Button(self.f_btn, command=self.toggle_sound, **b_style)
+        self.btn_sound.grid(row=0, column=0, sticky="we", padx=(0, 4))
+        tk.Button(self.f_btn, text="MAP", command=self.mostrar_imagen_layout, **b_style).grid(row=0, column=1, sticky="we", padx=4)
+        tk.Button(self.f_btn, text="MENU", command=self.show_main_menu, **b_style).grid(row=0, column=2, sticky="we", padx=(4, 0))
+        self.f_btn.grid_columnconfigure((0, 1, 2), weight=1)
+        self.update_sound_button()
 
         # Carga imagen para el Mapa
         try:
@@ -1069,6 +1078,27 @@ class AppIndustrial:
                 save_system_config(get_system_config())
                 self.registrar_log("Initial setup skipped; using current configuration")
 
+    def _build_overview_widgets(self):
+        self.overview_frame = tk.Frame(self.container, bg=HMI_SURFACE, bd=1, relief="solid")
+        self.overview_frame.grid(row=0, column=0, columnspan=HMI_GRID_COLUMNS, sticky="nsew", padx=8, pady=8)
+        tk.Label(self.overview_frame, text="SYSTEM STATUS", font=("Arial", 20, "bold"),
+                 bg=HMI_SURFACE, fg=HMI_TEXT).pack(pady=(24, 12))
+        self.overview_indicator = tk.Canvas(self.overview_frame, width=190, height=190,
+                                            bg=HMI_SURFACE, highlightthickness=0)
+        self.overview_indicator.pack(pady=4)
+        self.overview_circle = self.overview_indicator.create_oval(15, 15, 175, 175,
+                                                                     fill="#555555", outline=HMI_TEXT, width=3)
+        self.overview_status = tk.Label(self.overview_frame, text="WAITING FOR DATA", font=("Arial", 20, "bold"),
+                                        bg=HMI_SURFACE, fg=HMI_TEXT)
+        self.overview_status.pack(pady=(8, 2))
+        self.overview_detail = tk.Label(self.overview_frame, text="", font=("Arial", 12, "bold"),
+                                        bg=HMI_SURFACE, fg="#d9f99d", wraplength=620, justify="center")
+        self.overview_detail.pack(pady=(0, 10))
+        self.overview_pressure_status = tk.Label(self.overview_frame, text="PRESSURE: WAITING FOR DATA",
+                                                  font=("Arial", 13, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT,
+                                                  wraplength=620, justify="center")
+        self.overview_pressure_status.pack(fill="x", padx=22, pady=(8, 8))
+
     def rebuild_node_grid(self):
         configured_count = get_configured_node_count()
         node_pages = max(1, (configured_count + NODES_PER_PAGE - 1) // NODES_PER_PAGE)
@@ -1085,77 +1115,60 @@ class AppIndustrial:
         self.model_labels = []
         self.mode_labels = []
 
-        self.overview_frame = tk.Frame(self.container, bg="#3a2a7a")
-        self.overview_frame.grid(row=0, column=0, columnspan=HMI_GRID_COLUMNS, sticky="nsew", padx=8, pady=8)
-        tk.Label(self.overview_frame, text="SYSTEM STATUS", font=("Arial", 15, "bold"),
-             bg="#3a2a7a", fg="white").pack(pady=(18, 8))
-        self.overview_indicator = tk.Canvas(self.overview_frame, width=150, height=150,
-                            bg="#3a2a7a", highlightthickness=0)
-        self.overview_indicator.pack(pady=4)
-        self.overview_circle = self.overview_indicator.create_oval(15, 15, 135, 135,
-                                        fill="#555555", outline="white", width=3)
-        self.overview_status = tk.Label(self.overview_frame, text="WAITING FOR DATA", font=("Arial", 16, "bold"),
-                        bg="#3a2a7a", fg="white")
-        self.overview_status.pack(pady=(8, 2))
-        self.overview_detail = tk.Label(self.overview_frame, text="", font=("Arial", 9, "bold"),
-                        bg="#3a2a7a", fg="#d9f99d", wraplength=400, justify="center")
-        self.overview_detail.pack(pady=(0, 10))
-        self.overview_pressure_status = tk.Label(self.overview_frame, text="PRESSURE: WAITING FOR DATA",
-                                                  font=("Arial", 10, "bold"), bg="#2a1a5a", fg="white",
-                                                  wraplength=400, justify="center")
-        self.overview_pressure_status.pack(fill="x", padx=14, pady=(2, 4))
+        self._build_overview_widgets()
         self.overview_pressure_legend = tk.Label(
             self.overview_frame,
             text=(f"Below {PRESSURE_OK_MIN:.0f} Pa: check fans or purifier filter. "
                   f"Above {PRESSURE_MARK_FILTER_DIRTY:.0f} Pa (MARK) or "
                   f"{PRESSURE_MOLDEX_FILTER_DIRTY:.0f} Pa (MOLDEX): clean filter."),
-            font=("Arial", 8), bg="#3a2a7a", fg="#ffd166", wraplength=400, justify="center")
-        self.overview_pressure_legend.pack(padx=14, pady=(0, 18))
+            font=("Arial", 10), bg=HMI_SURFACE, fg="#ffd166", wraplength=620, justify="center")
+        self.overview_pressure_legend.pack(padx=22, pady=(0, 24))
 
         for device_id in range(1, configured_count + 1):
-            frame = tk.Frame(self.container, bg="#3a2a7a", bd=1, relief="flat")
+            frame = tk.Frame(self.container, bg=HMI_SURFACE, bd=1, relief="solid")
             pos_in_page = (device_id - 1) % NODES_PER_PAGE
             row = pos_in_page // HMI_GRID_COLUMNS
             col = pos_in_page % HMI_GRID_COLUMNS
-            frame.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+            frame.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
             frame.device_id = device_id
             frame.page_num = (device_id - 1) // NODES_PER_PAGE + 1
             self.frames_robot.append(frame)
 
-            tk.Label(frame, text=f"Node-{device_id}", font=("Arial", 8, "bold"), bg="#ffc72c", fg="black").pack(fill="x", pady=0)
+            tk.Label(frame, text=f"Node-{device_id}", font=("Arial", 13, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT).pack(fill="x", pady=0)
 
-            model_label = tk.Label(frame, text=get_node_model(device_id), font=("Arial", 6, "bold"), bg="#3a2a7a", fg="#9ed8ff")
-            model_label.pack()
+            model_label = tk.Label(frame, text=get_node_model(device_id), font=("Arial", 9, "bold"), bg=HMI_SURFACE, fg=HMI_TEXT_MUTED)
+            model_label.pack(pady=(6, 0))
             self.model_labels.append(model_label)
 
             mode_text = "MAINTENANCE" if is_node_in_maintenance(device_id) else "OPERATING"
             mode_color = "#ffb347" if is_node_in_maintenance(device_id) else "#d9f99d"
-            mode_label = tk.Label(frame, text=mode_text, font=("Arial", 6, "bold"), bg="#3a2a7a", fg=mode_color)
-            mode_label.pack()
+            mode_label = tk.Label(frame, text=mode_text, font=("Arial", 9, "bold"), bg=HMI_SURFACE, fg=mode_color)
+            mode_label.pack(pady=(2, 4))
             self.mode_labels.append(mode_label)
 
-            cv = tk.Canvas(frame, width=35, height=35, bg="#3a2a7a", highlightthickness=0)
+            cv = tk.Canvas(frame, width=58, height=58, bg=HMI_SURFACE, highlightthickness=0)
             cv.pack(pady=0)
-            circ_v = cv.create_oval(6, 6, 29, 29, fill="#555555", outline="white")
+            circ_v = cv.create_oval(7, 7, 51, 51, fill="#555555", outline=HMI_TEXT, width=2)
             self.leds_v.append((cv, circ_v))
 
-            pressure_label = tk.Label(frame, text="--- Pa", font=("Arial", 7, "bold"), bg="#3a2a7a", fg="#ff4444")
-            pressure_label.pack()
+            pressure_label = tk.Label(frame, text="--- Pa", font=("Arial", 11, "bold"), bg=HMI_SURFACE, fg="#ff4444")
+            pressure_label.pack(pady=(2, 4))
             self.lbls_v_val.append(pressure_label)
 
-            lamps_frame = tk.Frame(frame, bg="#3a2a7a")
+            lamps_frame = tk.Frame(frame, bg=HMI_SURFACE)
             lamps_frame.pack(pady=0)
             lamp_widgets = []
             for lamp_idx in range(2):
-                lamp_canvas = tk.Canvas(lamps_frame, width=14, height=14, bg="#3a2a7a", highlightthickness=0)
-                lamp_canvas.grid(row=0, column=lamp_idx, padx=1)
-                lamp_circle = lamp_canvas.create_oval(2, 2, 12, 12, fill="#555555", outline="white")
+                lamp_canvas = tk.Canvas(lamps_frame, width=22, height=22, bg=HMI_SURFACE, highlightthickness=0)
+                lamp_canvas.grid(row=0, column=lamp_idx, padx=4)
+                lamp_circle = lamp_canvas.create_oval(3, 3, 19, 19, fill="#555555", outline=HMI_TEXT)
                 lamp_widgets.append((lamp_canvas, lamp_circle))
             self.uv_lamps.append(lamp_widgets)
 
-            tk.Button(frame, text="VIEW", font=("Arial", 6, "bold"), bg="#ffc72c", fg="black",
+            tk.Button(frame, text="VIEW", font=("Arial", 10, "bold"), bg=HMI_BUTTON, fg=HMI_TEXT,
+                     activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT, relief="flat",
                      command=lambda node_id=device_id: self.mostrar_detalle_lamparas(node_id),
-                     height=1, padx=2).pack(fill="x", pady=2)
+                     height=2, padx=2).pack(fill="x", padx=8, pady=(8, 10))
             frame.bind("<Button-1>", lambda e, node_id=device_id: self.mostrar_detalle_lamparas(node_id))
 
         self.refresh_page()
@@ -1169,32 +1182,33 @@ class AppIndustrial:
         current_config = get_system_config()
         dialog = tk.Toplevel(self.root)
         dialog.title("Initial Node Setup" if first_run else "System Settings")
-        dialog.geometry("460x680")
-        dialog.configure(bg="#1f1f2e")
+        dialog.geometry("680x980")
+        dialog.minsize(680, 900)
+        dialog.configure(bg=HMI_SURFACE)
         dialog.transient(self.root)
         dialog.grab_set()
 
         tk.Label(dialog,
                  text="Configure Nodes" if first_run else "Node Settings",
-                 font=("Arial", 14, "bold"), bg="#1f1f2e", fg="white").pack(pady=(12, 4))
+                 font=("Arial", 18, "bold"), bg=HMI_SURFACE, fg=HMI_TEXT).pack(pady=(20, 6))
         tk.Label(dialog,
                  text="Select how many nodes are installed and assign a model to each one.",
-                 font=("Arial", 9), bg="#1f1f2e", fg="#d1d5db").pack(pady=(0, 10))
+                 font=("Arial", 11), bg=HMI_SURFACE, fg=HMI_TEXT_MUTED).pack(pady=(0, 14))
 
-        top_frame = tk.Frame(dialog, bg="#1f1f2e")
-        top_frame.pack(fill="x", padx=12)
-        tk.Label(top_frame, text="Number of Nodes", font=("Arial", 10, "bold"), bg="#1f1f2e", fg="white").pack(side="left")
+        top_frame = tk.Frame(dialog, bg=HMI_SURFACE)
+        top_frame.pack(fill="x", padx=20)
+        tk.Label(top_frame, text="Number of Nodes", font=("Arial", 12, "bold"), bg=HMI_SURFACE, fg=HMI_TEXT).pack(side="left")
 
         node_count_var = tk.IntVar(value=current_config.get('node_count', NUM_DEVICES))
         node_count_spinbox = tk.Spinbox(top_frame, from_=1, to=MAX_DEVICE_ID, width=6, textvariable=node_count_var)
         node_count_spinbox.pack(side="right")
 
-        list_frame = tk.Frame(dialog, bg="#1f1f2e")
-        list_frame.pack(expand=True, fill="both", padx=12, pady=10)
+        list_frame = tk.Frame(dialog, bg=HMI_SURFACE)
+        list_frame.pack(expand=True, fill="both", padx=20, pady=14)
 
-        canvas = tk.Canvas(list_frame, bg="#1f1f2e", highlightthickness=0)
+        canvas = tk.Canvas(list_frame, bg=HMI_SURFACE, highlightthickness=0)
         scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
-        rows_frame = tk.Frame(canvas, bg="#1f1f2e")
+        rows_frame = tk.Frame(canvas, bg=HMI_SURFACE)
         rows_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=rows_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -1222,24 +1236,24 @@ class AppIndustrial:
                         'maintenance': tk.BooleanVar(value=existing_node.get('maintenance', False)),
                     }
 
-                row = tk.Frame(rows_frame, bg="#2a2a3a", pady=4)
-                row.pack(fill="x", pady=2)
+                row = tk.Frame(rows_frame, bg=HMI_SURFACE_ALT, pady=8)
+                row.pack(fill="x", pady=4)
 
-                tk.Label(row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 9, "bold"), bg="#2a2a3a", fg="white").pack(side="left", padx=6)
+                tk.Label(row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 11, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT).pack(side="left", padx=10)
 
                 option = tk.OptionMenu(row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
-                option.config(width=18, bg="#ffc72c", fg="black", highlightthickness=0,
-                              activebackground="#e6b422", activeforeground="black",
+                option.config(width=18, bg=HMI_BUTTON, fg=HMI_TEXT, highlightthickness=0,
+                              activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
                               anchor="w", relief="raised", bd=2)
-                option["menu"].config(bg="white", fg="black", activebackground="#ffc72c",
-                                       activeforeground="black", bd=0)
+                option["menu"].config(bg=HMI_SURFACE_ALT, fg=HMI_TEXT, activebackground=HMI_BUTTON_ACTIVE,
+                                       activeforeground=HMI_TEXT, bd=0)
                 option.pack(side="left", padx=4)
 
                 tk.Checkbutton(row,
                                text="Maintenance mode",
                                variable=row_vars[device_id]['maintenance'],
-                               bg="#2a2a3a", fg="#ffcc80", selectcolor="#2a2a3a",
-                               activebackground="#2a2a3a", activeforeground="#ffcc80").pack(side="right", padx=8)
+                               font=("Arial", 10, "bold"), bg=HMI_SURFACE_ALT, fg="#ffcc80", selectcolor=HMI_SURFACE_ALT,
+                               activebackground=HMI_SURFACE_ALT, activeforeground="#ffcc80").pack(side="right", padx=12)
 
         def save_dialog():
             try:
@@ -1279,15 +1293,15 @@ class AppIndustrial:
         node_count_var.trace_add('write', build_rows)
         build_rows()
 
-        button_frame = tk.Frame(dialog, bg="#1f1f2e")
-        button_frame.pack(fill="x", padx=12, pady=(4, 12))
+        button_frame = tk.Frame(dialog, bg=HMI_SURFACE)
+        button_frame.pack(fill="x", padx=20, pady=(8, 20))
         if not first_run:
             tk.Button(button_frame, text="RESET CONFIGURATION", command=reset_configuration,
-                     bg="#b91c1c", fg="white", font=("Arial", 9, "bold")).pack(side="left")
+                     bg="#9f333b", fg=HMI_TEXT, font=("Arial", 11, "bold"), height=2, relief="flat").pack(side="left")
         tk.Button(button_frame, text="CANCEL", command=on_close,
-                 bg="#6b7280", fg="white", font=("Arial", 9, "bold")).pack(side="right", padx=4)
+                 bg=HMI_BUTTON, fg=HMI_TEXT, font=("Arial", 11, "bold"), height=2, relief="flat").pack(side="right", padx=4)
         tk.Button(button_frame, text="SAVE", command=save_dialog,
-                 bg="#16a34a", fg="white", font=("Arial", 9, "bold")).pack(side="right", padx=4)
+                 bg="#237a56", fg=HMI_TEXT, font=("Arial", 11, "bold"), height=2, relief="flat").pack(side="right", padx=4)
 
         dialog.protocol("WM_DELETE_WINDOW", on_close)
         self.root.wait_window(dialog)
@@ -1295,6 +1309,32 @@ class AppIndustrial:
 
     def open_settings_dialog(self):
         self.show_configuration_dialog(first_run=False)
+
+    def update_sound_button(self):
+        if self.sonido_habil:
+            self.btn_sound.config(text="SOUND: ON", fg="#d9f99d")
+        else:
+            self.btn_sound.config(text="SOUND: OFF", fg="#ffd166")
+
+    def toggle_sound(self):
+        if self.sonido_habil:
+            self.silenciar()
+        else:
+            self.reset()
+        self.update_sound_button()
+
+    def show_main_menu(self):
+        menu = tk.Menu(self.root, tearoff=False, bg=HMI_SURFACE_ALT, fg=HMI_TEXT,
+                       activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+                       font=("Arial", 11, "bold"), bd=0)
+        menu.add_command(label="EVENT LOGS", command=self.abrir_historial)
+        menu.add_command(label="NODE SETTINGS", command=self.open_settings_dialog)
+        menu.add_separator()
+        menu.add_command(label="RESTART PROGRAM", command=self.reiniciar_programa)
+        try:
+            menu.tk_popup(self.root.winfo_rootx() + 440, self.root.winfo_rooty() + 1030)
+        finally:
+            menu.grab_release()
 
     def toggle_window(self, window_attr_name):
         window = getattr(self, window_attr_name, None)
@@ -1771,12 +1811,16 @@ class AppIndustrial:
             set_relay(PIN_BUZZER, False)
         except:
             pass
+        if hasattr(self, 'btn_sound'):
+            self.update_sound_button()
 
     def reset(self):
         """Re-enable sound"""
         self.sonido_habil = True
         print("[SOUND] Sound re-enabled")
         self.registrar_log("Sound re-enabled")
+        if hasattr(self, 'btn_sound'):
+            self.update_sound_button()
 
     def registrar_log(self, info):
         try:
