@@ -40,10 +40,12 @@ import sys
 import os
 import subprocess
 import json
+import shutil
+import string
 from datetime import datetime
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 from PIL import Image, ImageTk
 import random
 
@@ -138,7 +140,7 @@ NUM_DEVICES = 50                   # Number of remote nodes to poll
 MIN_DEVICE_ID = 1                  # Protocol minimum device ID
 MAX_DEVICE_ID = 255                # 1 byte in packet supports IDs up to 255
 HMI_GRID_COLUMNS = 2               # Readable node cards on the 720px display
-NODES_PER_PAGE = 6                 # 2 columns x 3 rows per page
+NODES_PER_PAGE = 4                 # 2 columns x 2 rows per page
 QUERY_INTERVAL = 5.0               # Seconds between query cycles
 RESPONSE_TIMEOUT = 4.0             # Seconds to wait for each response
 FREQUENCY = 433E6                  # LoRa frequency (Hz)
@@ -173,6 +175,13 @@ DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 
 # Persistent node configuration
 CONFIG_FILE = "walle_system_config.json"
+DEFAULT_NODE_COUNT = 10
+DEFAULT_USER_PIN = "1234"
+MASTER_PIN = "1357"                # Recovery PIN; intentionally fixed and not stored in configuration.
+MAP_FILE_BASENAME = "Wall-E_Guardian_Map"
+MAP_DIRECTORY = "WALL-E HMI images"
+MAP_EXTENSIONS = (".png", ".jpg", ".jpeg")
+DEFAULT_MAP_PATH = os.path.join(MAP_DIRECTORY, "walle_location_plan_santa_maria_numbered.png")
 NODE_MODEL_PURIFIER_MARK = "Purifier MARK"
 NODE_MODEL_PURIFIER_MOLDEX = "Purifier MOLDEX"
 NODE_MODEL_UV_ONLY = "Only UV Lamps"
@@ -207,7 +216,38 @@ def create_default_node_entry(device_id):
     }
 
 
-def build_default_system_config(node_count=NUM_DEVICES, setup_completed=False):
+def normalize_user_pin(pin_value):
+    pin = str(pin_value)
+    return pin if len(pin) == 4 and pin.isdigit() else DEFAULT_USER_PIN
+
+
+def find_usb_map_file():
+    search_roots = []
+    if os.name == 'nt':
+        system_drive = os.path.normcase(os.environ.get("SystemDrive", "C:"))
+        search_roots = [f"{letter}:\\" for letter in string.ascii_uppercase
+                        if os.path.exists(f"{letter}:\\") and os.path.normcase(f"{letter}:") != system_drive]
+    else:
+        for root in ("/media", "/mnt"):
+            if os.path.isdir(root):
+                search_roots.extend(os.path.join(root, entry) for entry in os.listdir(root))
+
+    expected_names = {f"{MAP_FILE_BASENAME}{extension}".lower() for extension in MAP_EXTENSIONS}
+    for root in search_roots:
+        try:
+            for current_root, directories, filenames in os.walk(root):
+                relative_depth = os.path.relpath(current_root, root).count(os.sep)
+                if relative_depth >= 2:
+                    directories[:] = []
+                for filename in filenames:
+                    if filename.lower() in expected_names:
+                        return os.path.join(current_root, filename)
+        except OSError:
+            continue
+    return None
+
+
+def build_default_system_config(node_count=DEFAULT_NODE_COUNT, setup_completed=False):
     try:
         normalized_count = int(node_count)
     except (TypeError, ValueError):
@@ -216,6 +256,7 @@ def build_default_system_config(node_count=NUM_DEVICES, setup_completed=False):
     return {
         'setup_completed': setup_completed,
         'node_count': normalized_count,
+        'user_pin': DEFAULT_USER_PIN,
         'nodes': [create_default_node_entry(device_id) for device_id in range(1, MAX_DEVICE_ID + 1)]
     }
 
@@ -226,9 +267,9 @@ def normalize_system_config(raw_config):
         return default_config
 
     try:
-        node_count = int(raw_config.get('node_count', NUM_DEVICES))
+        node_count = int(raw_config.get('node_count', DEFAULT_NODE_COUNT))
     except (TypeError, ValueError):
-        node_count = NUM_DEVICES
+        node_count = DEFAULT_NODE_COUNT
     node_count = max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, node_count))
 
     raw_nodes = raw_config.get('nodes', [])
@@ -249,6 +290,7 @@ def normalize_system_config(raw_config):
     return {
         'setup_completed': bool(raw_config.get('setup_completed', False)),
         'node_count': node_count,
+        'user_pin': normalize_user_pin(raw_config.get('user_pin', DEFAULT_USER_PIN)),
         'nodes': normalized_nodes,
     }
 
@@ -926,7 +968,7 @@ def demo_loop():
 class AppIndustrial:
     def __init__(self, root):
         self.root = root
-        self.root.title("WALL-E MONITOR")
+        self.root.title("WALL-E GUARDIAN")
         self.root.geometry("720x1280")  # 7-inch touch screen (portrait) with taskbar
         self.root.minsize(720, 1280)
         self.root.configure(bg=HMI_BG)
@@ -970,7 +1012,7 @@ class AppIndustrial:
         center_frame = tk.Frame(self.header, bg=HMI_BG)
         center_frame.pack(side="left", expand=True, fill="both")
         
-        tk.Label(center_frame, text="UV LAMP MONITORING", font=("Arial", 15, "bold"), fg=HMI_TEXT, bg=HMI_BG).pack()
+        tk.Label(center_frame, text="WALL-E GUARDIAN", font=("Arial", 15, "bold"), fg=HMI_TEXT, bg=HMI_BG).pack()
         
         self.lbl_reloj = tk.Label(center_frame, text="", font=("Courier", 14, "bold"), fg="#2ecc71", bg=HMI_BG)
         self.lbl_reloj.pack()
@@ -1048,12 +1090,9 @@ class AppIndustrial:
         self.f_btn.grid_columnconfigure((0, 1, 2), weight=1)
         self.update_sound_button()
 
-        # Carga imagen para el Mapa
-        try:
-            m_img = Image.open("WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
-            self.img_layout_full = ImageTk.PhotoImage(m_img.resize((440, 550), Image.LANCZOS))
-        except: 
-            self.img_layout_full = None
+        self.map_image_path = None
+        self.img_layout_full = None
+        self.load_map_image()
 
         # Setup GPIO for tower indicators
         try:
@@ -1308,7 +1347,91 @@ class AppIndustrial:
         return dialog_state['saved']
 
     def open_settings_dialog(self):
-        self.show_configuration_dialog(first_run=False)
+        if self.require_protected_access("open node settings"):
+            self.show_configuration_dialog(first_run=False)
+
+    def require_protected_access(self, action_name):
+        entered_pin = simpledialog.askstring(
+            "Protected action",
+            f"Enter the 4-digit PIN to {action_name}:",
+            parent=self.root,
+            show="*",
+        )
+        if entered_pin is None:
+            return False
+        valid_pins = (get_system_config().get('user_pin', DEFAULT_USER_PIN), MASTER_PIN)
+        if entered_pin in valid_pins:
+            return True
+        messagebox.showerror("Access denied", "Incorrect PIN.", parent=self.root)
+        return False
+
+    def change_user_pin(self):
+        current_pin = simpledialog.askstring(
+            "Change user PIN",
+            "Enter current user PIN or master PIN:",
+            parent=self.root,
+            show="*",
+        )
+        if current_pin is None:
+            return
+        if current_pin not in (get_system_config().get('user_pin', DEFAULT_USER_PIN), MASTER_PIN):
+            messagebox.showerror("Access denied", "Incorrect PIN.", parent=self.root)
+            return
+        new_pin = simpledialog.askstring("Change user PIN", "Enter a new 4-digit user PIN:", parent=self.root, show="*")
+        if new_pin is None:
+            return
+        if len(new_pin) != 4 or not new_pin.isdigit():
+            messagebox.showerror("Invalid PIN", "The user PIN must contain exactly 4 digits.", parent=self.root)
+            return
+        confirmation = simpledialog.askstring("Change user PIN", "Confirm the new user PIN:", parent=self.root, show="*")
+        if confirmation != new_pin:
+            messagebox.showerror("PIN mismatch", "The new PINs do not match.", parent=self.root)
+            return
+        new_config = get_system_config()
+        new_config['user_pin'] = new_pin
+        save_system_config(new_config)
+        self.registrar_log("User PIN changed")
+        messagebox.showinfo("User PIN", "User PIN updated.", parent=self.root)
+
+    def load_map_image(self):
+        saved_map_paths = [os.path.join(MAP_DIRECTORY, f"{MAP_FILE_BASENAME}{extension}") for extension in MAP_EXTENSIONS]
+        source_path = next((path for path in saved_map_paths if os.path.isfile(path)), DEFAULT_MAP_PATH)
+        try:
+            map_image = Image.open(source_path)
+            map_image.thumbnail((660, 900), Image.LANCZOS)
+            self.img_layout_full = ImageTk.PhotoImage(map_image.copy())
+            self.map_image_path = source_path
+            return True
+        except (OSError, ValueError):
+            self.img_layout_full = None
+            self.map_image_path = None
+            return False
+
+    def update_map_from_usb(self):
+        if not self.require_protected_access("update the plant map"):
+            return
+        source_path = find_usb_map_file()
+        if source_path is None:
+            messagebox.showwarning(
+                "Map not found",
+                f"Connect a USB drive containing {MAP_FILE_BASENAME}.png, .jpg, or .jpeg.",
+                parent=self.root,
+            )
+            return
+        os.makedirs(MAP_DIRECTORY, exist_ok=True)
+        destination_path = os.path.join(MAP_DIRECTORY, f"{MAP_FILE_BASENAME}{os.path.splitext(source_path)[1].lower()}")
+        try:
+            for extension in MAP_EXTENSIONS:
+                previous_path = os.path.join(MAP_DIRECTORY, f"{MAP_FILE_BASENAME}{extension}")
+                if previous_path != destination_path and os.path.isfile(previous_path):
+                    os.remove(previous_path)
+            shutil.copy2(source_path, destination_path)
+            if not self.load_map_image():
+                raise OSError("The copied image could not be opened.")
+            self.registrar_log("Plant map updated from USB")
+            messagebox.showinfo("Map updated", "The Guardian map was copied from USB.", parent=self.root)
+        except OSError as error:
+            messagebox.showerror("Map update failed", str(error), parent=self.root)
 
     def update_sound_button(self):
         if self.sonido_habil:
@@ -1329,6 +1452,8 @@ class AppIndustrial:
                        font=("Arial", 11, "bold"), bd=0)
         menu.add_command(label="EVENT LOGS", command=self.abrir_historial)
         menu.add_command(label="NODE SETTINGS", command=self.open_settings_dialog)
+        menu.add_command(label="UPDATE MAP FROM USB", command=self.update_map_from_usb)
+        menu.add_command(label="CHANGE USER PIN", command=self.change_user_pin)
         menu.add_separator()
         menu.add_command(label="RESTART PROGRAM", command=self.reiniciar_programa)
         try:
@@ -1704,7 +1829,7 @@ class AppIndustrial:
 
     def mostrar_imagen_layout(self):
         if not self.img_layout_full:
-            messagebox.showwarning("Error", "Map image not found: WALL-E HMI images/walle_location_plan_santa_maria_numbered.png")
+            messagebox.showwarning("Error", "Map image not found. Update it from USB using MENU.")
             return
         if self.toggle_window('map_window') is None:
             return
@@ -1712,26 +1837,27 @@ class AppIndustrial:
         # Create a new window for the map
         top = tk.Toplevel(self.root)
         self.map_window = top
-        top.title("Plant Map - Wall-E")
-        top.geometry("450x650")
-        top.configure(bg="#222222")
+        top.title("Wall-E Guardian Plant Map")
+        top.geometry("700x1100")
+        top.configure(bg=HMI_BG)
         top.resizable(True, True)
         
         # Frame for image and close button
-        frame_img = tk.Frame(top, bg="#222222")
+        frame_img = tk.Frame(top, bg=HMI_BG)
         frame_img.pack(expand=True, fill="both", padx=10, pady=10)
         
         # Display image
-        lbl_img = tk.Label(frame_img, image=self.img_layout_full, bg="#222222")
+        lbl_img = tk.Label(frame_img, image=self.img_layout_full, bg=HMI_BG)
         lbl_img.pack(expand=True, fill="both")
         
         # Frame for buttons at bottom
-        frame_btn = tk.Frame(top, bg="#222222")
+        frame_btn = tk.Frame(top, bg=HMI_BG)
         frame_btn.pack(side="bottom", fill="x", padx=10, pady=10)
         
         close_map = self.register_window_close(top, lambda: setattr(self, 'map_window', None))
-        tk.Button(frame_btn, text="CLOSE", command=close_map, bg="red", fg="white", 
-                 font=("Arial", 10, "bold"), width=20).pack(pady=5)
+        tk.Button(frame_btn, text="CLOSE", command=close_map, bg=HMI_BUTTON, fg=HMI_TEXT,
+             activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+             font=("Arial", 12, "bold"), width=20, height=2, relief="flat").pack(pady=5)
 
     def mostrar_detalle_lamparas(self, device_id):
         """Open a window showing per-lamp UV status for a device"""
@@ -1882,6 +2008,10 @@ class AppIndustrial:
     
     def limpiar_logs(self):
         """Clear the security log file"""
+        if not self.require_protected_access("clear event logs"):
+            return
+        if not messagebox.askyesno("Clear logs", "Clear all event log entries?", parent=self.root):
+            return
         try:
             with open("log_seguridad.csv", "w") as f:
                 f.write("Logs cleared on {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
