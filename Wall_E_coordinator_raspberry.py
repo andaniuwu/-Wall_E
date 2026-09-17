@@ -188,6 +188,10 @@ NODE_MODEL_PURIFIER_MARK = "Purifier MARK"
 NODE_MODEL_PURIFIER_MOLDEX = "Purifier MOLDEX"
 NODE_MODEL_UV_ONLY = "Only UV Lamps"
 NODE_MODEL_OPTIONS = [NODE_MODEL_PURIFIER_MARK, NODE_MODEL_PURIFIER_MOLDEX, NODE_MODEL_UV_ONLY]
+TEST_PROFILE_OK = "OK"
+TEST_PROFILE_PRESSURE_FAULT = "LOW PRESSURE"
+TEST_PROFILE_CURRENT_FAULT = "CURRENT FAULT"
+TEST_PROFILE_OPTIONS = [TEST_PROFILE_OK, TEST_PROFILE_PRESSURE_FAULT, TEST_PROFILE_CURRENT_FAULT]
 
 # ============================================================================
 # GLOBAL STATE
@@ -215,6 +219,7 @@ def create_default_node_entry(device_id):
         'device_id': device_id,
         'model': NODE_MODEL_OPTIONS[0],
         'maintenance': False,
+        'test_profile': TEST_PROFILE_OK,
     }
 
 
@@ -259,6 +264,7 @@ def build_default_system_config(node_count=DEFAULT_NODE_COUNT, setup_completed=F
         'setup_completed': setup_completed,
         'node_count': normalized_count,
         'user_pin': DEFAULT_USER_PIN,
+        'system_test_mode_enabled': False,
         'nodes': [create_default_node_entry(device_id) for device_id in range(1, MAX_DEVICE_ID + 1)]
     }
 
@@ -283,16 +289,21 @@ def normalize_system_config(raw_config):
         model = raw_node.get('model', NODE_MODEL_OPTIONS[0])
         if model not in NODE_MODEL_OPTIONS:
             model = NODE_MODEL_OPTIONS[0]
+        test_profile = raw_node.get('test_profile', TEST_PROFILE_OK)
+        if test_profile not in TEST_PROFILE_OPTIONS:
+            test_profile = TEST_PROFILE_OK
         normalized_nodes.append({
             'device_id': device_id,
             'model': model,
             'maintenance': bool(raw_node.get('maintenance', False)),
+            'test_profile': test_profile,
         })
 
     return {
         'setup_completed': bool(raw_config.get('setup_completed', False)),
         'node_count': node_count,
         'user_pin': normalize_user_pin(raw_config.get('user_pin', DEFAULT_USER_PIN)),
+        'system_test_mode_enabled': bool(raw_config.get('system_test_mode_enabled', False)),
         'nodes': normalized_nodes,
     }
 
@@ -916,6 +927,47 @@ def generate_demo_data(device_id):
         'timestamp': datetime.now()
     }
 
+
+def generate_test_mode_data(device_id, test_profile):
+    model = get_node_model(device_id)
+    pressure = random.uniform(10.0, 17.0)
+    current_1 = random.uniform(320.0, 520.0)
+    current_2 = random.uniform(320.0, 520.0)
+
+    if model == NODE_MODEL_UV_ONLY:
+        pressure = 0.0
+    elif test_profile == TEST_PROFILE_PRESSURE_FAULT:
+        pressure = random.uniform(1.0, PRESSURE_OK_MIN - 0.5)
+    elif test_profile == TEST_PROFILE_CURRENT_FAULT:
+        current_1 = random.uniform(0.0, CURRENT_VISUAL_ON_THRESHOLD - 2.0)
+        current_2 = random.uniform(0.0, CURRENT_VISUAL_ON_THRESHOLD - 2.0)
+
+    return {
+        'device_id': device_id,
+        'seq': random.randint(0, 65535),
+        'pressure_value': pressure,
+        'curr1_mA': current_1,
+        'curr2_mA': current_2,
+        'curr3_mA': 0.0,
+        'curr4_mA': 0.0,
+        'timestamp': datetime.now(),
+    }
+
+
+def run_configured_test_cycle():
+    global current_scanning_device
+
+    synchronize_runtime_state()
+    for device_id in get_active_device_ids():
+        node_config = get_node_config(device_id)
+        response = generate_test_mode_data(device_id, node_config.get('test_profile', TEST_PROFILE_OK))
+        with device_data_lock:
+            current_scanning_device = device_id
+            shared_device_data[device_id] = response
+        device_consecutive_failures[device_id] = 0
+        device_consecutive_sensor_errors[device_id] = 1 if has_sensor_error(response) else 0
+        time.sleep(0.1)
+
 def demo_loop():
     """Demo mode coordinator loop - simulates device responses"""
     global coordinator_running, shared_device_data, device_data_lock
@@ -1132,12 +1184,14 @@ class AppIndustrial:
 
     def get_dialog_geometry(self, preferred_width, preferred_height):
         self.root.update_idletasks()
-        available_width = max(560, self.root.winfo_width() - 40)
-        available_height = max(760, self.root.winfo_height() - 60)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        available_width = max(320, screen_width - 40)
+        available_height = max(480, screen_height - 60)
         dialog_width = min(preferred_width, available_width)
         dialog_height = min(preferred_height, available_height)
-        x_position = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog_width) // 2)
-        y_position = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog_height) // 2)
+        x_position = max(0, (screen_width - dialog_width) // 2)
+        y_position = max(0, (screen_height - dialog_height) // 2)
         return dialog_width, dialog_height, x_position, y_position
 
     def ensure_configuration_ready(self):
@@ -1250,11 +1304,11 @@ class AppIndustrial:
         current_config = get_system_config()
         dialog = tk.Toplevel(self.root)
         dialog.title("Initial Node Setup" if first_run else "System Settings")
-        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
-        dialog.minsize(560, 760)
         dialog.configure(bg=HMI_SURFACE)
         dialog.transient(self.root)
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.resizable(False, False)
         dialog.grab_set()
 
         tk.Label(dialog,
@@ -1271,6 +1325,15 @@ class AppIndustrial:
         node_count_var = tk.IntVar(value=current_config.get('node_count', NUM_DEVICES))
         node_count_spinbox = tk.Spinbox(top_frame, from_=1, to=MAX_DEVICE_ID, width=6, textvariable=node_count_var)
         node_count_spinbox.pack(side="right")
+
+        system_test_enabled_var = tk.BooleanVar(value=current_config.get('system_test_mode_enabled', False))
+        tk.Checkbutton(
+            dialog,
+            text="Enable test mode (simulation, LoRa polling paused)",
+            variable=system_test_enabled_var,
+            font=("Arial", 10, "bold"), bg=HMI_SURFACE, fg="#ffd166", selectcolor=HMI_SURFACE,
+            activebackground=HMI_SURFACE, activeforeground="#ffd166",
+        ).pack(anchor="w", padx=20, pady=(10, 0))
 
         list_frame = tk.Frame(dialog, bg=HMI_SURFACE)
         list_frame.pack(expand=True, fill="both", padx=20, pady=14)
@@ -1303,14 +1366,20 @@ class AppIndustrial:
                     row_vars[device_id] = {
                         'model': tk.StringVar(value=existing_node.get('model', NODE_MODEL_OPTIONS[0])),
                         'maintenance': tk.BooleanVar(value=existing_node.get('maintenance', False)),
+                        'test_profile': tk.StringVar(value=existing_node.get('test_profile', TEST_PROFILE_OK)),
                     }
 
                 row = tk.Frame(rows_frame, bg=HMI_SURFACE_ALT, pady=8)
                 row.pack(fill="x", pady=4)
 
-                tk.Label(row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 11, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT).pack(side="left", padx=10)
+                details_row = tk.Frame(row, bg=HMI_SURFACE_ALT)
+                details_row.pack(fill="x")
+                test_row = tk.Frame(row, bg=HMI_SURFACE_ALT)
+                test_row.pack(fill="x", pady=(6, 0))
 
-                option = tk.OptionMenu(row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
+                tk.Label(details_row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 11, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT).pack(side="left", padx=10)
+
+                option = tk.OptionMenu(details_row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
                 option.config(width=18, bg=HMI_BUTTON, fg=HMI_TEXT, highlightthickness=0,
                               activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
                               anchor="w", relief="raised", bd=2)
@@ -1318,11 +1387,20 @@ class AppIndustrial:
                                        activeforeground=HMI_TEXT, bd=0)
                 option.pack(side="left", padx=4)
 
-                tk.Checkbutton(row,
+                tk.Checkbutton(details_row,
                                text="Maintenance mode",
                                variable=row_vars[device_id]['maintenance'],
                                font=("Arial", 10, "bold"), bg=HMI_SURFACE_ALT, fg="#ffcc80", selectcolor=HMI_SURFACE_ALT,
                                activebackground=HMI_SURFACE_ALT, activeforeground="#ffcc80").pack(side="right", padx=12)
+
+                tk.Label(test_row, text="Test profile", width=12, anchor="w", font=("Arial", 10, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT_MUTED).pack(side="left", padx=10)
+                test_option = tk.OptionMenu(test_row, row_vars[device_id]['test_profile'], *TEST_PROFILE_OPTIONS)
+                test_option.config(width=18, bg=HMI_BUTTON, fg=HMI_TEXT, highlightthickness=0,
+                                   activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+                                   anchor="w", relief="raised", bd=2)
+                test_option["menu"].config(bg=HMI_SURFACE_ALT, fg=HMI_TEXT, activebackground=HMI_BUTTON_ACTIVE,
+                                             activeforeground=HMI_TEXT, bd=0)
+                test_option.pack(side="left", padx=4)
 
         def save_dialog():
             try:
@@ -1335,9 +1413,11 @@ class AppIndustrial:
             new_config = normalize_system_config(current_config)
             new_config['setup_completed'] = True
             new_config['node_count'] = requested_count
+            new_config['system_test_mode_enabled'] = bool(system_test_enabled_var.get())
             for device_id in range(1, requested_count + 1):
                 new_config['nodes'][device_id - 1]['model'] = row_vars[device_id]['model'].get()
                 new_config['nodes'][device_id - 1]['maintenance'] = bool(row_vars[device_id]['maintenance'].get())
+                new_config['nodes'][device_id - 1]['test_profile'] = row_vars[device_id]['test_profile'].get()
 
             self.apply_system_configuration(new_config)
             dialog_state['saved'] = True
@@ -1868,9 +1948,10 @@ class AppIndustrial:
         top = tk.Toplevel(self.root)
         self.map_window = top
         top.title("Wall-E Guardian Plant Map")
-        top.geometry("700x1100")
+        map_width, map_height, x_position, y_position = self.get_dialog_geometry(700, 1100)
+        top.geometry(f"{map_width}x{map_height}+{x_position}+{y_position}")
         top.configure(bg=HMI_BG)
-        top.resizable(True, True)
+        top.resizable(False, False)
         
         # Frame for image and close button
         frame_img = tk.Frame(top, bg=HMI_BG)
@@ -2087,22 +2168,26 @@ def coordinator_loop():
                     print(f"[WARNING] Error during hard reset: {e}")
 
                 synchronize_runtime_state()
-                
-                # Query all devices
-                for device_id in get_active_device_ids():
-                    response = query_device(device_id)
-                    
-                    # Update shared data structure (thread-safe)
-                    with device_data_lock:
-                        if response:
-                            # Update with new data
-                            shared_device_data[device_id] = response
-                        else:
-                            # Remove stale data when no response to avoid showing old data
-                            if device_id in shared_device_data:
-                                del shared_device_data[device_id]
-                    
-                    time.sleep(0.5)  # Delay between requests
+
+                if get_system_config().get('system_test_mode_enabled', False):
+                    print("[TEST MODE] Generating configured node data")
+                    run_configured_test_cycle()
+                else:
+                    # Query all devices
+                    for device_id in get_active_device_ids():
+                        response = query_device(device_id)
+
+                        # Update shared data structure (thread-safe)
+                        with device_data_lock:
+                            if response:
+                                # Update with new data
+                                shared_device_data[device_id] = response
+                            else:
+                                # Remove stale data when no response to avoid showing old data
+                                if device_id in shared_device_data:
+                                    del shared_device_data[device_id]
+
+                        time.sleep(0.5)  # Delay between requests
                 
                 # Print device statistics
                 print(f"\nDevice Statistics:")
