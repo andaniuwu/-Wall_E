@@ -969,8 +969,7 @@ class AppIndustrial:
     def __init__(self, root):
         self.root = root
         self.root.title("WALL-E GUARDIAN")
-        self.root.geometry("720x1280")  # 7-inch touch screen (portrait) with taskbar
-        self.root.minsize(720, 1280)
+        self.configure_window_for_display()
         self.root.configure(bg=HMI_BG)
         
         self.sonido_habil = True  
@@ -1110,6 +1109,24 @@ class AppIndustrial:
 
         # Start periodic update of device status from shared data
         self.actualizar_datos_dispositivos()
+
+    def configure_window_for_display(self):
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        is_target_display = screen_width == 720 and screen_height == 1280
+
+        if is_target_display:
+            self.root.attributes("-fullscreen", True)
+            self.root.resizable(False, False)
+            return
+
+        window_width = min(720, max(600, screen_width - 80))
+        window_height = min(1100, max(800, screen_height - 80))
+        x_position = max(0, (screen_width - window_width) // 2)
+        y_position = max(0, (screen_height - window_height) // 2)
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+        self.root.minsize(600, 800)
+        self.root.resizable(True, True)
 
     def ensure_configuration_ready(self):
         if not get_system_config().get('setup_completed', False):
