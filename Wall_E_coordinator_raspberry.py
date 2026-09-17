@@ -1038,6 +1038,7 @@ class AppIndustrial:
         self.test_mode = False
         self.leds_v = []
         self.lbls_v_val = []
+        self.pressure_status_labels = []
         self.frames_robot = []
         self.uv_lamps = []
         self.model_labels = []
@@ -1274,8 +1275,12 @@ class AppIndustrial:
             self.leds_v.append((cv, circ_v))
 
             pressure_label = tk.Label(frame, text="--- Pa", font=("Arial", 11, "bold"), bg=HMI_SURFACE, fg="#ff4444")
-            pressure_label.pack(pady=(2, 4))
+            pressure_label.pack(pady=(2, 0))
             self.lbls_v_val.append(pressure_label)
+
+            pressure_status_label = tk.Label(frame, text="WAITING FOR PRESSURE", font=("Arial", 8, "bold"), bg=HMI_SURFACE, fg=HMI_TEXT_MUTED)
+            pressure_status_label.pack(pady=(0, 4))
+            self.pressure_status_labels.append(pressure_status_label)
 
             lamps_frame = tk.Frame(frame, bg=HMI_SURFACE)
             lamps_frame.pack(pady=0)
@@ -1304,10 +1309,13 @@ class AppIndustrial:
         current_config = get_system_config()
         dialog = tk.Toplevel(self.root)
         dialog.title("Initial Node Setup" if first_run else "System Settings")
+        dialog.withdraw()
         dialog.configure(bg=HMI_SURFACE)
-        dialog_width, dialog_height, _, _ = self.get_dialog_geometry(640, 980)
-        dialog.geometry(f"{dialog_width}x{dialog_height}")
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
         dialog.resizable(False, False)
+        dialog.deiconify()
+        dialog.update_idletasks()
         dialog.grab_set()
 
         tk.Label(dialog,
@@ -1805,6 +1813,7 @@ class AppIndustrial:
                         for lamp_i in range(2):
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#6b7280")
                         self.lbls_v_val[idx].config(text="MAINT", fg="#ffb347")
+                        self.pressure_status_labels[idx].config(text="PRESSURE PAUSED", fg="#ffb347")
                         continue
                     else:
                         self.mode_labels[idx].config(text="OPERATING", fg="#d9f99d")
@@ -1868,6 +1877,7 @@ class AppIndustrial:
                             self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill=lamp_color)
                         label_color = "white" if pressure_status['state'] == 'OK' else pressure_status['color']
                         self.lbls_v_val[idx].config(text=pressure_status['short_label'], fg=label_color)
+                        self.pressure_status_labels[idx].config(text=pressure_status['label'], fg=pressure_status['color'])
 
                     else:
                         # No data available for this device - check consecutive failures
@@ -1879,6 +1889,7 @@ class AppIndustrial:
                             for lamp_i in range(2):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#2ecc71")
                             self.lbls_v_val[idx].config(text="OK", fg="white")
+                            self.pressure_status_labels[idx].config(text="TEST DATA PENDING", fg=HMI_TEXT_MUTED)
                             # Only trigger alarm if Device 1 has exceeded failure threshold
                             if device_id == 1 and consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
@@ -1892,6 +1903,7 @@ class AppIndustrial:
                             for lamp_i in range(2):
                                 self.uv_lamps[idx][lamp_i][0].itemconfig(self.uv_lamps[idx][lamp_i][1], fill="#555555")
                             self.lbls_v_val[idx].config(text="--- Pa", fg="#ff4444")
+                            self.pressure_status_labels[idx].config(text="NO PRESSURE DATA", fg="#ff4444")
                             # Only trigger alarm if exceeded failure threshold
                             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                                 communication_failure_detected = True
@@ -1947,10 +1959,13 @@ class AppIndustrial:
         top = tk.Toplevel(self.root)
         self.map_window = top
         top.title("Wall-E Guardian Plant Map")
-        map_width, map_height, _, _ = self.get_dialog_geometry(700, 1100)
-        top.geometry(f"{map_width}x{map_height}")
+        top.withdraw()
+        map_width, map_height, x_position, y_position = self.get_dialog_geometry(700, 1100)
+        top.geometry(f"{map_width}x{map_height}+{x_position}+{y_position}")
         top.configure(bg=HMI_BG)
         top.resizable(False, False)
+        top.deiconify()
+        top.update_idletasks()
         
         # Frame for image and close button
         frame_img = tk.Frame(top, bg=HMI_BG)
