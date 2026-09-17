@@ -934,13 +934,13 @@ def generate_test_mode_data(device_id, test_profile):
     current_1 = random.uniform(320.0, 520.0)
     current_2 = random.uniform(320.0, 520.0)
 
+    if test_profile == TEST_PROFILE_CURRENT_FAULT:
+        current_1 = random.uniform(0.0, CURRENT_VISUAL_ON_THRESHOLD - 2.0)
+        current_2 = random.uniform(0.0, CURRENT_VISUAL_ON_THRESHOLD - 2.0)
     if model == NODE_MODEL_UV_ONLY:
         pressure = 0.0
     elif test_profile == TEST_PROFILE_PRESSURE_FAULT:
         pressure = random.uniform(1.0, PRESSURE_OK_MIN - 0.5)
-    elif test_profile == TEST_PROFILE_CURRENT_FAULT:
-        current_1 = random.uniform(0.0, CURRENT_VISUAL_ON_THRESHOLD - 2.0)
-        current_2 = random.uniform(0.0, CURRENT_VISUAL_ON_THRESHOLD - 2.0)
 
     return {
         'device_id': device_id,
@@ -1305,9 +1305,8 @@ class AppIndustrial:
         dialog = tk.Toplevel(self.root)
         dialog.title("Initial Node Setup" if first_run else "System Settings")
         dialog.configure(bg=HMI_SURFACE)
-        dialog.transient(self.root)
-        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog_width, dialog_height, _, _ = self.get_dialog_geometry(640, 980)
+        dialog.geometry(f"{dialog_width}x{dialog_height}")
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -1948,8 +1947,8 @@ class AppIndustrial:
         top = tk.Toplevel(self.root)
         self.map_window = top
         top.title("Wall-E Guardian Plant Map")
-        map_width, map_height, x_position, y_position = self.get_dialog_geometry(700, 1100)
-        top.geometry(f"{map_width}x{map_height}+{x_position}+{y_position}")
+        map_width, map_height, _, _ = self.get_dialog_geometry(700, 1100)
+        top.geometry(f"{map_width}x{map_height}")
         top.configure(bg=HMI_BG)
         top.resizable(False, False)
         
