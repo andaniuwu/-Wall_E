@@ -154,6 +154,8 @@ HMI_BUTTON = "#343d50"
 HMI_BUTTON_ACTIVE = "#4a4269"
 HMI_TEXT = "#f4f6fa"
 HMI_TEXT_MUTED = "#b8c0cf"
+TARGET_DISPLAY_WIDTH = 720
+TARGET_DISPLAY_HEIGHT = 1280
 
 # HMI THRESHOLDS
 PRESSURE_OK_MIN = 6.0              # Minimum pressure considered OK (Pa)
@@ -1113,7 +1115,7 @@ class AppIndustrial:
     def configure_window_for_display(self):
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        is_target_display = screen_width == 720 and screen_height == 1280
+        is_target_display = screen_width == TARGET_DISPLAY_WIDTH and screen_height == TARGET_DISPLAY_HEIGHT
 
         if is_target_display:
             self.root.attributes("-fullscreen", True)
@@ -1127,6 +1129,16 @@ class AppIndustrial:
         self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
         self.root.minsize(600, 800)
         self.root.resizable(True, True)
+
+    def get_dialog_geometry(self, preferred_width, preferred_height):
+        self.root.update_idletasks()
+        available_width = max(560, self.root.winfo_width() - 40)
+        available_height = max(760, self.root.winfo_height() - 60)
+        dialog_width = min(preferred_width, available_width)
+        dialog_height = min(preferred_height, available_height)
+        x_position = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog_width) // 2)
+        y_position = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog_height) // 2)
+        return dialog_width, dialog_height, x_position, y_position
 
     def ensure_configuration_ready(self):
         if not get_system_config().get('setup_completed', False):
@@ -1238,8 +1250,9 @@ class AppIndustrial:
         current_config = get_system_config()
         dialog = tk.Toplevel(self.root)
         dialog.title("Initial Node Setup" if first_run else "System Settings")
-        dialog.geometry("680x980")
-        dialog.minsize(680, 900)
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.minsize(560, 760)
         dialog.configure(bg=HMI_SURFACE)
         dialog.transient(self.root)
         dialog.grab_set()
