@@ -1527,12 +1527,9 @@ class AppIndustrial:
 
     def show_selection_dialog(self, parent, title, variable, options):
         dialog = tk.Toplevel(parent)
+        dialog.withdraw()
         dialog.title(title)
         dialog.configure(bg=HMI_SURFACE)
-        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(
-            560, max(260, 110 + len(options) * 76)
-        )
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
         dialog.resizable(False, False)
         dialog.transient(parent)
 
@@ -1555,6 +1552,13 @@ class AppIndustrial:
                       fill="x", padx=20, pady=(8, 16)
                   )
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.update_idletasks()
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(
+            560, max(260, 110 + len(options) * 76)
+        )
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.deiconify()
+        dialog.lift()
         parent.wait_window(dialog)
 
     def ask_numeric_keypad(self, title, prompt, max_digits=4, min_digits=1,
@@ -1562,13 +1566,11 @@ class AppIndustrial:
                            parent=None):
         parent = parent or self.root
         dialog = tk.Toplevel(parent)
+        dialog.withdraw()
         dialog.title(title)
         dialog.configure(bg=HMI_SURFACE)
-        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(440, 650)
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
         dialog.resizable(False, False)
         dialog.transient(parent)
-        dialog.grab_set()
 
         tk.Label(dialog, text=title, font=("Arial", 18, "bold"),
                  bg=HMI_SURFACE, fg=HMI_TEXT).pack(pady=(18, 8))
@@ -1633,6 +1635,12 @@ class AppIndustrial:
 
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         dialog.bind("<Return>", lambda _event: submit())
+        dialog.update_idletasks()
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(440, 650)
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.deiconify()
+        dialog.lift()
+        dialog.grab_set()
         parent.wait_window(dialog)
         return result['value']
 
