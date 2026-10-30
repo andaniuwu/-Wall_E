@@ -370,8 +370,8 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 //     * Channel 2 (S2): 2.508V (measured)
 //   - AC Coupling: Small voltage swing (~2mV) during load indicates sensor is detecting signal
 //   - Zero-clamping: Values < 1mA are clamped to 0A to eliminate noise
-const float ACS712_DC_OFFSET_CH1 = 2.514f;     // DC offset voltage Channel 1 (MEASURED)
-const float ACS712_DC_OFFSET_CH2 = 2.508f;     // DC offset voltage Channel 2 (MEASURED)
+const float ACS712_DC_OFFSET_CH1 = 2.500f;     // DC offset voltage Channel 1 (MEASURED signal voltage in 0A)
+const float ACS712_DC_OFFSET_CH2 = 2.500f;     // DC offset voltage Channel 2 (MEASURED signal voltage in 0A)
 //const float ACS712_SENSITIVITY_mVpA = 92.5f;   // Sensitivity in mV/A (185mV/A ÷ 2 from divisor)
 const float ACS712_SENSITIVITY_mVpA = 185.0f;   // Sensitivity in mV/A (185mV/A without voltage divisor)
 const float ACS712_SENSITIVITY_VpA = ACS712_SENSITIVITY_mVpA / 1000.0f;  // Convert to V/A
@@ -384,6 +384,9 @@ const float CURRENT_ZERO_RELEASE_A = 0.090f;  // Leave zero-lock above 90mA
 const float CURRENT_ZERO_ENTER_FAN_A = 0.085f;    // Stronger lock when fans are active (induced noise)
 const float CURRENT_ZERO_RELEASE_FAN_A = 0.120f;  // Release above 120mA so 60-70mA ghost stays clamped
 const uint8_t CURRENT_ZERO_RELEASE_SAMPLES = 4;  // Consecutive samples required to unlock
+
+#define CURRENT_GAIN_CH1 1.0f//0.87f
+#define CURRENT_GAIN_CH2 1.0f//0.87f
 
 // CURRENT MEASUREMENT MODE: Choose between AC and DC measurement
 // Set to true for AC measurement (RMS), false for DC measurement (average)
@@ -410,8 +413,7 @@ const uint8_t CURRENT_ZERO_RELEASE_SAMPLES = 4;  // Consecutive samples required
 //
 // Tip:
 //   Tune with averaged values over ~20-60s, not single lines.
-#define CURRENT_GAIN_CH1 0.87f
-#define CURRENT_GAIN_CH2 0.87f
+
 
 
 
