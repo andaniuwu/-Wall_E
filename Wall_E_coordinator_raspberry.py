@@ -45,7 +45,7 @@ import string
 from datetime import datetime
 import threading
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 from PIL import Image, ImageTk
 import random
 
@@ -159,11 +159,11 @@ TARGET_DISPLAY_HEIGHT = 1280
 
 # HMI THRESHOLDS
 PRESSURE_OK_MIN = 6.0              # Minimum pressure considered OK (Pa)
-PRESSURE_MARK_FILTER_DIRTY = 19.0  # MARK purifier filter cleaning threshold (Pa)
+PRESSURE_MARK_LOW_MAX = 5.0        # MAK 414 low-pressure limit (Pa)
+PRESSURE_MARK_FILTER_DIRTY = 15.0  # MAK 414 filter-cleaning threshold (Pa)
 PRESSURE_MOLDEX_FILTER_DIRTY = 30.0  # MOLDEX purifier filter cleaning threshold (Pa)
 PRESSURE_SCALE_MAX = 130.0         # Telemetry scaling max for pressure byte
 CURRENT_VISUAL_ON_THRESHOLD = 30.0  # Current above this value is shown as functionally active
-CURRENT_FAULT_THRESHOLD = 50.0      # Any lamp below this value triggers a system fault
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
 
 # ALARM TOLERANCE CONFIGURATION
@@ -184,7 +184,7 @@ MAP_FILE_BASENAME = "Wall-E_Guardian_Map"
 MAP_DIRECTORY = "WALL-E HMI images"
 MAP_EXTENSIONS = (".png", ".jpg", ".jpeg")
 DEFAULT_MAP_PATH = os.path.join(MAP_DIRECTORY, "walle_location_plan_santa_maria_numbered.png")
-NODE_MODEL_PURIFIER_MARK = "Purifier MARK"
+NODE_MODEL_PURIFIER_MARK = "MAK 414"
 NODE_MODEL_PURIFIER_MOLDEX = "Purifier MOLDEX"
 NODE_MODEL_UV_ONLY = "Only UV Lamps"
 NODE_MODEL_OPTIONS = [NODE_MODEL_PURIFIER_MARK, NODE_MODEL_PURIFIER_MOLDEX, NODE_MODEL_UV_ONLY]
@@ -729,7 +729,23 @@ def evaluate_pressure_status(device_id, pressure_value):
             'fault': False,
         }
 
-    if pressure_value < PRESSURE_OK_MIN:
+    if model == NODE_MODEL_PURIFIER_MARK:
+        low_pressure = pressure_value <= PRESSURE_MARK_LOW_MAX
+        filter_dirty = pressure_value >= PRESSURE_MARK_FILTER_DIRTY
+    elif model == NODE_MODEL_PURIFIER_MOLDEX:
+        low_pressure = pressure_value < PRESSURE_OK_MIN
+        filter_dirty = pressure_value > PRESSURE_MOLDEX_FILTER_DIRTY
+    else:
+        return {
+            'state': 'NOT_EQUIPPED',
+            'label': 'PRESSURE NOT EQUIPPED',
+            'short_label': 'NOT EQUIPPED',
+            'color': '#9ca3af',
+            'warning': False,
+            'fault': False,
+        }
+
+    if low_pressure:
         return {
             'state': 'LOW_FLOW',
             'label': 'LOW PRESSURE: CHECK FANS OR FILTER',
@@ -739,17 +755,7 @@ def evaluate_pressure_status(device_id, pressure_value):
             'fault': False,
         }
 
-    if model == NODE_MODEL_PURIFIER_MARK and pressure_value > PRESSURE_MARK_FILTER_DIRTY:
-        return {
-            'state': 'FILTER',
-            'label': 'FILTER NEEDS CLEANING',
-            'short_label': f'{pressure_value:.1f} Pa',
-            'color': '#f59e0b',
-            'warning': True,
-            'fault': False,
-        }
-
-    if model == NODE_MODEL_PURIFIER_MOLDEX and pressure_value > PRESSURE_MOLDEX_FILTER_DIRTY:
+    if filter_dirty:
         return {
             'state': 'FILTER',
             'label': 'FILTER NEEDS CLEANING',
@@ -897,8 +903,11 @@ def query_all_devices():
 
 def generate_demo_data(device_id):
     """Generate simulated sensor data for testing without real hardware"""
+    model = get_node_model(device_id)
     # Simulate realistic voltage variations (100-135V for real operation)
     pressure = random.uniform(100.0, 135.0)
+    if model == NODE_MODEL_UV_ONLY:
+        pressure = 0.0
     
     # 70% chance of normal operation, 30% chance of fault
     if random.random() < 0.7:
@@ -910,7 +919,10 @@ def generate_demo_data(device_id):
     else:
         # Fault state - some lamps off
         if random.random() < 0.5:
-            pressure = random.uniform(8.0, 10.5)  # Low pressure fault
+            if model == NODE_MODEL_PURIFIER_MARK:
+                pressure = random.uniform(0.0, PRESSURE_MARK_LOW_MAX)
+            elif model == NODE_MODEL_PURIFIER_MOLDEX:
+                pressure = random.uniform(0.0, PRESSURE_OK_MIN - 0.1)
         curr1 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
         curr2 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
         curr3 = random.uniform(10, 100) if random.random() < 0.5 else random.uniform(300, 500)
@@ -940,7 +952,10 @@ def generate_test_mode_data(device_id, test_profile):
     if model == NODE_MODEL_UV_ONLY:
         pressure = 0.0
     elif test_profile == TEST_PROFILE_PRESSURE_FAULT:
-        pressure = random.uniform(1.0, PRESSURE_OK_MIN - 0.5)
+        if model == NODE_MODEL_PURIFIER_MARK:
+            pressure = random.uniform(0.0, PRESSURE_MARK_LOW_MAX)
+        elif model == NODE_MODEL_PURIFIER_MOLDEX:
+            pressure = random.uniform(0.0, PRESSURE_OK_MIN - 0.1)
 
     return {
         'device_id': device_id,
@@ -1241,9 +1256,11 @@ class AppIndustrial:
         self._build_overview_widgets()
         self.overview_pressure_legend = tk.Label(
             self.overview_frame,
-            text=(f"Below {PRESSURE_OK_MIN:.0f} Pa: check fans or purifier filter. "
-                  f"Above {PRESSURE_MARK_FILTER_DIRTY:.0f} Pa (MARK) or "
-                  f"{PRESSURE_MOLDEX_FILTER_DIRTY:.0f} Pa (MOLDEX): clean filter."),
+            text=(f"MAK 414: <= {PRESSURE_MARK_LOW_MAX:.0f} Pa low, "
+                f"> {PRESSURE_MARK_LOW_MAX:.0f} and < {PRESSURE_MARK_FILTER_DIRTY:.0f} Pa OK, "
+                f">= {PRESSURE_MARK_FILTER_DIRTY:.0f} Pa clean filter. "
+                f"MOLDEX: below {PRESSURE_OK_MIN:.0f} Pa low; "
+                f"above {PRESSURE_MOLDEX_FILTER_DIRTY:.0f} Pa clean filter."),
             font=("Arial", 10), bg=HMI_SURFACE, fg="#ffd166", wraplength=620, justify="center")
         self.overview_pressure_legend.pack(padx=22, pady=(0, 24))
 
@@ -1311,12 +1328,11 @@ class AppIndustrial:
         dialog.title("Initial Node Setup" if first_run else "System Settings")
         dialog.withdraw()
         dialog.configure(bg=HMI_SURFACE)
-        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.attributes("-fullscreen", True)
         dialog.resizable(False, False)
         dialog.deiconify()
         dialog.update_idletasks()
-        dialog.grab_set()
+        dialog.lift()
 
         tk.Label(dialog,
                  text="Configure Nodes" if first_run else "Node Settings",
@@ -1327,11 +1343,37 @@ class AppIndustrial:
 
         top_frame = tk.Frame(dialog, bg=HMI_SURFACE)
         top_frame.pack(fill="x", padx=20)
-        tk.Label(top_frame, text="Number of Nodes", font=("Arial", 12, "bold"), bg=HMI_SURFACE, fg=HMI_TEXT).pack(side="left")
+        tk.Label(top_frame, text="Number of Nodes", font=("Arial", 16, "bold"), bg=HMI_SURFACE, fg=HMI_TEXT).pack(side="left")
 
         node_count_var = tk.IntVar(value=current_config.get('node_count', NUM_DEVICES))
-        node_count_spinbox = tk.Spinbox(top_frame, from_=1, to=MAX_DEVICE_ID, width=6, textvariable=node_count_var)
-        node_count_spinbox.pack(side="right")
+        node_count_controls = tk.Frame(top_frame, bg=HMI_SURFACE)
+        node_count_controls.pack(side="right")
+
+        def adjust_node_count(delta):
+            node_count_var.set(max(MIN_DEVICE_ID, min(MAX_DEVICE_ID, node_count_var.get() + delta)))
+
+        def choose_node_count():
+            entered_count = self.ask_numeric_keypad(
+                "Number of Nodes",
+                f"Enter a value from {MIN_DEVICE_ID} to {MAX_DEVICE_ID}.",
+                max_digits=3,
+                minimum=MIN_DEVICE_ID,
+                maximum=MAX_DEVICE_ID,
+                initial_value=str(node_count_var.get()),
+                parent=dialog,
+            )
+            if entered_count is not None:
+                node_count_var.set(int(entered_count))
+
+        tk.Button(node_count_controls, text="-", command=lambda: adjust_node_count(-1),
+                  font=("Arial", 22, "bold"), width=4, height=2,
+                  bg=HMI_BUTTON, fg=HMI_TEXT, relief="flat").pack(side="left", padx=4)
+        tk.Button(node_count_controls, textvariable=node_count_var, command=choose_node_count,
+                  font=("Arial", 20, "bold"), width=6, height=2,
+                  bg=HMI_SURFACE_ALT, fg=HMI_TEXT, relief="solid", bd=1).pack(side="left", padx=4)
+        tk.Button(node_count_controls, text="+", command=lambda: adjust_node_count(1),
+                  font=("Arial", 22, "bold"), width=4, height=2,
+                  bg=HMI_BUTTON, fg=HMI_TEXT, relief="flat").pack(side="left", padx=4)
 
         system_test_enabled_var = tk.BooleanVar(value=current_config.get('system_test_mode_enabled', False))
         tk.Checkbutton(
@@ -1446,6 +1488,8 @@ class AppIndustrial:
                 return
             dialog.destroy()
 
+        dialog.bind("<Escape>", lambda _event: on_close())
+
         node_count_var.trace_add('write', build_rows)
         build_rows()
 
@@ -1467,12 +1511,92 @@ class AppIndustrial:
         if self.require_protected_access("open node settings"):
             self.show_configuration_dialog(first_run=False)
 
+    def ask_numeric_keypad(self, title, prompt, max_digits=4, min_digits=1,
+                           minimum=None, maximum=None, initial_value="", masked=False,
+                           parent=None):
+        parent = parent or self.root
+        dialog = tk.Toplevel(parent)
+        dialog.title(title)
+        dialog.configure(bg=HMI_SURFACE)
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(440, 650)
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.resizable(False, False)
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        tk.Label(dialog, text=title, font=("Arial", 18, "bold"),
+                 bg=HMI_SURFACE, fg=HMI_TEXT).pack(pady=(18, 8))
+        tk.Label(dialog, text=prompt, font=("Arial", 11),
+                 bg=HMI_SURFACE, fg=HMI_TEXT_MUTED).pack(padx=16, pady=(0, 10))
+
+        entered_value = tk.StringVar(value=initial_value)
+        tk.Entry(dialog, textvariable=entered_value, show="*" if masked else "",
+                 font=("Arial", 24, "bold"), justify="center",
+                 state="readonly", readonlybackground=HMI_SURFACE_ALT,
+                 fg=HMI_TEXT, relief="flat").pack(fill="x", padx=28, pady=(0, 14), ipady=8)
+
+        result = {'value': None}
+        keypad = tk.Frame(dialog, bg=HMI_SURFACE)
+        keypad.pack(expand=True, padx=20, pady=4)
+
+        def append_digit(digit):
+            value = entered_value.get()
+            if len(value) < max_digits:
+                entered_value.set(value + digit)
+
+        def clear_value():
+            entered_value.set("")
+
+        def delete_digit():
+            entered_value.set(entered_value.get()[:-1])
+
+        def submit():
+            value = entered_value.get()
+            valid = value.isdigit() and min_digits <= len(value) <= max_digits
+            if valid and minimum is not None:
+                valid = int(value) >= minimum
+            if valid and maximum is not None:
+                valid = int(value) <= maximum
+            if not valid:
+                messagebox.showerror("Invalid value", "Enter a valid numeric value.", parent=dialog)
+                return
+            result['value'] = value
+            dialog.destroy()
+
+        keys = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "CLR", "0", "DEL")
+        for index, key in enumerate(keys):
+            if key.isdigit():
+                command = lambda digit=key: append_digit(digit)
+            elif key == "CLR":
+                command = clear_value
+            else:
+                command = delete_digit
+            tk.Button(keypad, text=key, command=command, font=("Arial", 20, "bold"),
+                      width=6, height=2, bg=HMI_BUTTON, fg=HMI_TEXT,
+                      activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+                      relief="flat").grid(row=index // 3, column=index % 3, padx=5, pady=5, sticky="nsew")
+
+        actions = tk.Frame(dialog, bg=HMI_SURFACE)
+        actions.pack(fill="x", padx=20, pady=(8, 18))
+        tk.Button(actions, text="CANCEL", command=dialog.destroy,
+                  font=("Arial", 12, "bold"), height=2, bg=HMI_BUTTON,
+                  fg=HMI_TEXT, relief="flat").pack(side="left", expand=True, fill="x", padx=5)
+        tk.Button(actions, text="OK", command=submit,
+                  font=("Arial", 12, "bold"), height=2, bg="#237a56",
+                  fg=HMI_TEXT, relief="flat").pack(side="right", expand=True, fill="x", padx=5)
+
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.bind("<Return>", lambda _event: submit())
+        parent.wait_window(dialog)
+        return result['value']
+
     def require_protected_access(self, action_name):
-        entered_pin = simpledialog.askstring(
+        entered_pin = self.ask_numeric_keypad(
             "Protected action",
             f"Enter the 4-digit PIN to {action_name}:",
-            parent=self.root,
-            show="*",
+            max_digits=4,
+            min_digits=4,
+            masked=True,
         )
         if entered_pin is None:
             return False
@@ -1483,24 +1607,31 @@ class AppIndustrial:
         return False
 
     def change_user_pin(self):
-        current_pin = simpledialog.askstring(
+        current_pin = self.ask_numeric_keypad(
             "Change user PIN",
             "Enter current user PIN or master PIN:",
-            parent=self.root,
-            show="*",
+            max_digits=4,
+            min_digits=4,
+            masked=True,
         )
         if current_pin is None:
             return
         if current_pin not in (get_system_config().get('user_pin', DEFAULT_USER_PIN), MASTER_PIN):
             messagebox.showerror("Access denied", "Incorrect PIN.", parent=self.root)
             return
-        new_pin = simpledialog.askstring("Change user PIN", "Enter a new 4-digit user PIN:", parent=self.root, show="*")
+        new_pin = self.ask_numeric_keypad(
+            "Change user PIN", "Enter a new 4-digit user PIN:",
+            max_digits=4, min_digits=4, masked=True,
+        )
         if new_pin is None:
             return
         if len(new_pin) != 4 or not new_pin.isdigit():
             messagebox.showerror("Invalid PIN", "The user PIN must contain exactly 4 digits.", parent=self.root)
             return
-        confirmation = simpledialog.askstring("Change user PIN", "Confirm the new user PIN:", parent=self.root, show="*")
+        confirmation = self.ask_numeric_keypad(
+            "Change user PIN", "Confirm the new user PIN:",
+            max_digits=4, min_digits=4, masked=True,
+        )
         if confirmation != new_pin:
             messagebox.showerror("PIN mismatch", "The new PINs do not match.", parent=self.root)
             return
@@ -1704,8 +1835,6 @@ class AppIndustrial:
         """Return (status_code, color, description) for active current indicators."""
         if current_mA < CURRENT_VISUAL_ON_THRESHOLD:
             return "RED", "#e74c3c", "Lamp current missing"
-        if current_mA < CURRENT_FAULT_THRESHOLD:
-            return "YELLOW", "#f59e0b", "Low current warning"
         if current_mA <= CURRENT_MAX:
             return "GREEN", "#2ecc71", "Lamps working OK"
         return "RED", "#e74c3c", "Overcurrent fault"
@@ -1856,14 +1985,10 @@ class AppIndustrial:
                             elif pressure_status['state'] == 'FILTER' and device_id not in filter_nodes:
                                 filter_nodes.append(device_id)
                         current_fault_detected = any(status_code == "RED" for status_code, _, _ in current_status)
-                        current_warning_detected = any(status_code == "YELLOW" for status_code, _, _ in current_status)
                         if current_fault_detected:
                             confirmed_sensor_failure_detected = True
                             if device_id not in failing_nodes:
                                 failing_nodes.append(device_id)
-                        elif current_warning_detected:
-                            if device_id not in warning_nodes:
-                                warning_nodes.append(device_id)
                         if (not self.test_mode or device_id == 1) and device_consecutive_sensor_errors.get(device_id, 0) >= MAX_CONSECUTIVE_FAILURES:
                             if device_id not in failing_nodes:
                                 failing_nodes.append(device_id)
