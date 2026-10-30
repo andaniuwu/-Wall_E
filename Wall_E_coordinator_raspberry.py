@@ -1328,7 +1328,11 @@ class AppIndustrial:
         dialog.title("Initial Node Setup" if first_run else "System Settings")
         dialog.withdraw()
         dialog.configure(bg=HMI_SURFACE)
-        dialog.attributes("-fullscreen", True)
+        if first_run:
+            dialog.attributes("-fullscreen", True)
+        else:
+            dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(640, 980)
+            dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
         dialog.resizable(False, False)
         dialog.deiconify()
         dialog.update_idletasks()
@@ -1531,7 +1535,6 @@ class AppIndustrial:
         dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
         dialog.resizable(False, False)
         dialog.transient(parent)
-        dialog.grab_set()
 
         tk.Label(dialog, text=title, font=("Arial", 18, "bold"),
                  bg=HMI_SURFACE, fg=HMI_TEXT).pack(pady=(16, 10))
