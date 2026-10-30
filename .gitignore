@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+log_seguridad.csv
+walle_system_config.json
