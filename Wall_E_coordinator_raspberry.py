@@ -163,7 +163,7 @@ PRESSURE_MARK_LOW_MAX = 5.0        # MAK 414 low-pressure limit (Pa)
 PRESSURE_MARK_FILTER_DIRTY = 15.0  # MAK 414 filter-cleaning threshold (Pa)
 PRESSURE_MOLDEX_FILTER_DIRTY = 30.0  # MOLDEX purifier filter cleaning threshold (Pa)
 PRESSURE_SCALE_MAX = 130.0         # Telemetry scaling max for pressure byte
-CURRENT_VISUAL_ON_THRESHOLD = 30.0  # Current above this value is shown as functionally active
+CURRENT_VISUAL_ON_THRESHOLD = 50.0  # Currents below this value are treated as lamp faults
 CURRENT_MAX = 5000.0               # Maximum acceptable current per lamp (mA) = 5.0A
 
 # ALARM TOLERANCE CONFIGURATION
@@ -1428,12 +1428,17 @@ class AppIndustrial:
 
                 tk.Label(details_row, text=f"Node-{device_id}", width=8, anchor="w", font=("Arial", 11, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT).pack(side="left", padx=10)
 
-                option = tk.OptionMenu(details_row, row_vars[device_id]['model'], *NODE_MODEL_OPTIONS)
-                option.config(width=18, bg=HMI_BUTTON, fg=HMI_TEXT, highlightthickness=0,
-                              activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
-                              anchor="w", relief="raised", bd=2)
-                option["menu"].config(bg=HMI_SURFACE_ALT, fg=HMI_TEXT, activebackground=HMI_BUTTON_ACTIVE,
-                                       activeforeground=HMI_TEXT, bd=0)
+                model_var = row_vars[device_id]['model']
+                option = tk.Button(
+                    details_row,
+                    textvariable=model_var,
+                    command=lambda value=model_var: self.show_selection_dialog(
+                        dialog, "Select Node Type", value, NODE_MODEL_OPTIONS
+                    ),
+                    width=18, height=2, font=("Arial", 11, "bold"),
+                    bg=HMI_BUTTON, fg=HMI_TEXT, activebackground=HMI_BUTTON_ACTIVE,
+                    activeforeground=HMI_TEXT, anchor="w", relief="raised", bd=2,
+                )
                 option.pack(side="left", padx=4)
 
                 tk.Checkbutton(details_row,
@@ -1443,12 +1448,17 @@ class AppIndustrial:
                                activebackground=HMI_SURFACE_ALT, activeforeground="#ffcc80").pack(side="right", padx=12)
 
                 tk.Label(test_row, text="Test profile", width=12, anchor="w", font=("Arial", 10, "bold"), bg=HMI_SURFACE_ALT, fg=HMI_TEXT_MUTED).pack(side="left", padx=10)
-                test_option = tk.OptionMenu(test_row, row_vars[device_id]['test_profile'], *TEST_PROFILE_OPTIONS)
-                test_option.config(width=18, bg=HMI_BUTTON, fg=HMI_TEXT, highlightthickness=0,
-                                   activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
-                                   anchor="w", relief="raised", bd=2)
-                test_option["menu"].config(bg=HMI_SURFACE_ALT, fg=HMI_TEXT, activebackground=HMI_BUTTON_ACTIVE,
-                                             activeforeground=HMI_TEXT, bd=0)
+                profile_var = row_vars[device_id]['test_profile']
+                test_option = tk.Button(
+                    test_row,
+                    textvariable=profile_var,
+                    command=lambda value=profile_var: self.show_selection_dialog(
+                        dialog, "Select Test Profile", value, TEST_PROFILE_OPTIONS
+                    ),
+                    width=20, height=2, font=("Arial", 10, "bold"),
+                    bg=HMI_BUTTON, fg=HMI_TEXT, activebackground=HMI_BUTTON_ACTIVE,
+                    activeforeground=HMI_TEXT, anchor="w", relief="raised", bd=2,
+                )
                 test_option.pack(side="left", padx=4)
 
         def save_dialog():
@@ -1510,6 +1520,39 @@ class AppIndustrial:
     def open_settings_dialog(self):
         if self.require_protected_access("open node settings"):
             self.show_configuration_dialog(first_run=False)
+
+    def show_selection_dialog(self, parent, title, variable, options):
+        dialog = tk.Toplevel(parent)
+        dialog.title(title)
+        dialog.configure(bg=HMI_SURFACE)
+        dialog_width, dialog_height, x_position, y_position = self.get_dialog_geometry(
+            560, max(260, 110 + len(options) * 76)
+        )
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x_position}+{y_position}")
+        dialog.resizable(False, False)
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        tk.Label(dialog, text=title, font=("Arial", 18, "bold"),
+                 bg=HMI_SURFACE, fg=HMI_TEXT).pack(pady=(16, 10))
+        for option in options:
+            tk.Button(
+                dialog,
+                text=option,
+                command=lambda choice=option: (variable.set(choice), dialog.destroy()),
+                font=("Arial", 14, "bold"), height=2,
+                bg=HMI_BUTTON, fg=HMI_TEXT,
+                activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
+                relief="flat",
+            ).pack(fill="x", padx=20, pady=5)
+
+        tk.Button(dialog, text="CANCEL", command=dialog.destroy,
+                  font=("Arial", 12, "bold"), height=2,
+                  bg=HMI_SURFACE_ALT, fg=HMI_TEXT, relief="flat").pack(
+                      fill="x", padx=20, pady=(8, 16)
+                  )
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        parent.wait_window(dialog)
 
     def ask_numeric_keypad(self, title, prompt, max_digits=4, min_digits=1,
                            minimum=None, maximum=None, initial_value="", masked=False,
@@ -1697,7 +1740,7 @@ class AppIndustrial:
     def show_main_menu(self):
         menu = tk.Menu(self.root, tearoff=False, bg=HMI_SURFACE_ALT, fg=HMI_TEXT,
                        activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
-                       font=("Arial", 11, "bold"), bd=0)
+                       font=("Arial", 16, "bold"), bd=0, activeborderwidth=2)
         menu.add_command(label="EVENT LOGS", command=self.abrir_historial)
         menu.add_command(label="NODE SETTINGS", command=self.open_settings_dialog)
         menu.add_command(label="UPDATE MAP FROM USB", command=self.update_map_from_usb)
