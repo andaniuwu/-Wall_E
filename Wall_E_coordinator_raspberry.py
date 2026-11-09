@@ -40,6 +40,7 @@ import sys
 import os
 import subprocess
 import json
+import csv
 import shutil
 import string
 from datetime import datetime
@@ -177,6 +178,9 @@ DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 
 # Persistent node configuration
 CONFIG_FILE = "walle_system_config.json"
+LOG_FILE = "log_seguridad.csv"
+LOG_COLUMNS = ("Fecha", "Hora", "Nodo", "Evento", "Detalle")
+LEGACY_SOUND_EVENTS = {"sound on", "sound off", "sound enabled", "sound disabled", "sound re-enabled"}
 DEFAULT_NODE_COUNT = 10
 DEFAULT_USER_PIN = "1234"
 MASTER_PIN = "1357"                # Recovery PIN; intentionally fixed and not stored in configuration.
@@ -1061,6 +1065,7 @@ class AppIndustrial:
         self.map_window = None
         self.logs_window = None
         self.detail_windows = {}
+        self.active_log_conditions = {}
 
         # --- HEADER (Logos, Title, Clock) ---
         self.header = tk.Frame(self.root, bg=HMI_BG)
@@ -1319,7 +1324,41 @@ class AppIndustrial:
         self.refresh_page()
 
     def apply_system_configuration(self, new_config):
-        save_system_config(new_config)
+        previous_config = get_system_config()
+        normalized_config = normalize_system_config(new_config)
+        save_system_config(normalized_config)
+
+        if previous_config['node_count'] != normalized_config['node_count']:
+            self.registrar_log(
+                "CONFIGURACION DE NODOS",
+                details=f"Cantidad de nodos: {previous_config['node_count']} -> {normalized_config['node_count']}",
+            )
+
+        for device_id in range(1, MAX_DEVICE_ID + 1):
+            previous_node = previous_config['nodes'][device_id - 1]
+            updated_node = normalized_config['nodes'][device_id - 1]
+            changes = []
+            for key, label in (("model", "Modelo"), ("maintenance", "Mantenimiento"), ("test_profile", "Perfil de prueba")):
+                if previous_node[key] != updated_node[key]:
+                    old_value = previous_node[key]
+                    new_value = updated_node[key]
+                    if key == "maintenance":
+                        old_value = "ACTIVO" if old_value else "INACTIVO"
+                        new_value = "ACTIVO" if new_value else "INACTIVO"
+                    changes.append(f"{label}: {old_value} -> {new_value}")
+            if changes:
+                self.registrar_log(
+                    "CONFIGURACION DE NODO",
+                    device_id=device_id,
+                    details="; ".join(changes),
+                )
+                self.active_log_conditions.pop(device_id, None)
+
+        if previous_config['system_test_mode_enabled'] != normalized_config['system_test_mode_enabled']:
+            old_mode = "ACTIVO" if previous_config['system_test_mode_enabled'] else "INACTIVO"
+            new_mode = "ACTIVO" if normalized_config['system_test_mode_enabled'] else "INACTIVO"
+            self.registrar_log("CONFIGURACION DE NODOS", details=f"Modo de prueba: {old_mode} -> {new_mode}")
+
         synchronize_runtime_state()
         self.rebuild_node_grid()
 
@@ -1693,7 +1732,7 @@ class AppIndustrial:
         new_config = get_system_config()
         new_config['user_pin'] = new_pin
         save_system_config(new_config)
-        self.registrar_log("User PIN changed")
+        self.registrar_log("CAMBIO DE CONTRASENA", details="PIN de usuario actualizado")
         messagebox.showinfo("User PIN", "User PIN updated.", parent=self.root)
 
     def load_map_image(self):
@@ -1992,6 +2031,7 @@ class AppIndustrial:
 
                     self.model_labels[idx].config(text=node_config['model'])
                     if node_config['maintenance']:
+                        self.active_log_conditions.pop(device_id, None)
                         self.mode_labels[idx].config(text="MAINTENANCE", fg="#ffb347")
                         self.leds_v[idx][0].itemconfig(self.leds_v[idx][1], fill="#6b7280")
                         for lamp_i in range(2):
@@ -2010,6 +2050,33 @@ class AppIndustrial:
                         curr1 = data.get('curr1_mA', 0)
                         curr2 = data.get('curr2_mA', 0)
                         pressure_status = evaluate_pressure_status(device_id, pressure)
+
+                        self.registrar_transicion_evento(
+                            device_id, "perdida_senal", False, "PERDIDA DE SENAL"
+                        )
+                        for channel, current in enumerate((curr1, curr2), start=1):
+                            current_fault = current < CURRENT_VISUAL_ON_THRESHOLD or current > CURRENT_MAX
+                            self.registrar_transicion_evento(
+                                device_id,
+                                f"corriente_ch{channel}",
+                                current_fault,
+                                "FALLA DE CORRIENTE",
+                                f"CH{channel}: {current:.0f} mA",
+                            )
+                        self.registrar_transicion_evento(
+                            device_id,
+                            "presion_baja",
+                            pressure_status['state'] == 'LOW_FLOW',
+                            "PRESION BAJA",
+                            f"{pressure:.1f} Pa ({node_config['model']})",
+                        )
+                        self.registrar_transicion_evento(
+                            device_id,
+                            "filtro",
+                            pressure_status['state'] == 'FILTER',
+                            "FILTRO",
+                            f"{pressure:.1f} Pa ({node_config['model']})",
+                        )
                         
                         current_status = [
                             self.classify_current_status(curr1),
@@ -2062,6 +2129,27 @@ class AppIndustrial:
                     else:
                         # No data available for this device - check consecutive failures
                         consecutive_failures = device_consecutive_failures.get(device_id, 0)
+                        signal_failure_applies = (
+                            consecutive_failures >= MAX_CONSECUTIVE_FAILURES and
+                            (not self.test_mode or device_id == 1)
+                        )
+                        self.registrar_transicion_evento(
+                            device_id,
+                            "perdida_senal",
+                            signal_failure_applies,
+                            "PERDIDA DE SENAL",
+                            f"{consecutive_failures} consultas consecutivas sin respuesta",
+                        )
+                        for channel in (1, 2):
+                            self.registrar_transicion_evento(
+                                device_id, f"corriente_ch{channel}", False, "FALLA DE CORRIENTE"
+                            )
+                        self.registrar_transicion_evento(
+                            device_id, "presion_baja", False, "PRESION BAJA"
+                        )
+                        self.registrar_transicion_evento(
+                            device_id, "filtro", False, "FILTRO"
+                        )
                         
                         if self.test_mode:
                             # In test mode, treat missing devices as OK (except Device 1)
@@ -2229,9 +2317,7 @@ class AppIndustrial:
                   font=("Arial", 10, "bold"), width=20).pack(pady=10)
 
     def activar_alerta(self, msg):
-        if not self.falla_activa:  # Only log once when fault first detected
-            self.falla_activa = True
-            self.registrar_log(msg)
+        self.falla_activa = True
 
     def limpiar_alerta(self):
         self.falla_activa = False
@@ -2249,16 +2335,49 @@ class AppIndustrial:
         """Re-enable sound"""
         self.sonido_habil = True
         print("[SOUND] Sound re-enabled")
-        self.registrar_log("Sound re-enabled")
         if hasattr(self, 'btn_sound'):
             self.update_sound_button()
 
-    def registrar_log(self, info):
+    def registrar_transicion_evento(self, device_id, condition, active, event, details=""):
+        active_conditions = self.active_log_conditions.setdefault(device_id, set())
+        if active:
+            if condition not in active_conditions:
+                self.registrar_log(event, device_id=device_id, details=details)
+            active_conditions.add(condition)
+        else:
+            active_conditions.discard(condition)
+            if not active_conditions:
+                self.active_log_conditions.pop(device_id, None)
+
+    def registrar_log(self, event, device_id=None, details=""):
         try:
-            with open("log_seguridad.csv", "a") as f:
-                f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, {info}\n")
+            timestamp = datetime.now()
+            with open(LOG_FILE, "a", newline="", encoding="utf-8") as log_file:
+                writer = csv.writer(log_file)
+                if log_file.tell() == 0:
+                    writer.writerow(LOG_COLUMNS)
+                writer.writerow((
+                    timestamp.strftime("%Y-%m-%d"),
+                    timestamp.strftime("%H:%M:%S"),
+                    f"Node-{device_id}" if device_id is not None else "SISTEMA",
+                    event,
+                    details,
+                ))
         except Exception as e:
             print(f"Log write error: {e}")
+
+    def leer_eventos_log(self, limit=50):
+        with open(LOG_FILE, "r", newline="", encoding="utf-8") as log_file:
+            rows = list(csv.reader(log_file))
+
+        visible_rows = []
+        for row in rows:
+            if not row:
+                continue
+            event = row[3] if len(row) > 3 else row[-1]
+            if event.strip().casefold() not in LEGACY_SOUND_EVENTS:
+                visible_rows.append(", ".join(row))
+        return visible_rows[-limit:]
 
     def abrir_historial(self):
         if self.toggle_window('logs_window') is None:
@@ -2292,10 +2411,9 @@ class AppIndustrial:
         
         # Load log content
         try:
-            with open("log_seguridad.csv", "r") as f:
-                logs = f.readlines()[-50:]  # Show last 50 lines
-                content = "".join(reversed(logs))
-                txt.insert("1.0", content)
+            logs = self.leer_eventos_log()
+            content = "\n".join(reversed(logs))
+            txt.insert("1.0", content or "No previous records.")
         except:
             txt.insert("1.0", "No previous records.")
         
@@ -2318,8 +2436,17 @@ class AppIndustrial:
         if not messagebox.askyesno("Clear logs", "Clear all event log entries?", parent=self.root):
             return
         try:
-            with open("log_seguridad.csv", "w") as f:
-                f.write("Logs cleared on {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            timestamp = datetime.now()
+            with open(LOG_FILE, "w", newline="", encoding="utf-8") as log_file:
+                writer = csv.writer(log_file)
+                writer.writerow(LOG_COLUMNS)
+                writer.writerow((
+                    timestamp.strftime("%Y-%m-%d"),
+                    timestamp.strftime("%H:%M:%S"),
+                    "SISTEMA",
+                    "HISTORIAL LIMPIADO",
+                    "",
+                ))
             messagebox.showinfo("Success", "Logs cleared successfully")
         except Exception as e:
             messagebox.showerror("Error", f"Error clearing logs: {e}")
