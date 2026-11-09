@@ -77,10 +77,10 @@ GPIO_RST = 22
 # Yellow,5,29,2
 # Red,6,31,3
 # Buzzer,13,33,4
-PIN_GREEN_TURRET = 0    # PIN GREEN_COLOR TORRET
-PIN_YELLOW_TURRET = 5   # PIN YELLOW_COLOR TORRET
-PIN_RED_TURRET = 6      # PIN RED_COLOR TORRET
-PIN_BUZZER = 13         # PIN BUZZER TORRET
+PIN_GREEN_TURRET = 0    # PIN GREEN_COLOR TORRET // gpio 0 = pin 27
+PIN_YELLOW_TURRET = 5   # PIN YELLOW_COLOR TORRET // gpio 5 = pin 29
+PIN_RED_TURRET = 6      # PIN RED_COLOR TORRET //gpio 6 = pin 31
+PIN_BUZZER = 13         # PIN BUZZER TORRET  // gpio 13 = pin 33
 RELAY_ACTIVE_LOW = True  # Set True if relay outputs are active-low
 
 def set_relay(pin, on):
@@ -1248,6 +1248,7 @@ class AppIndustrial:
 
         self.leds_v = []
         self.lbls_v_val = []
+        self.pressure_status_labels = []
         self.frames_robot = []
         self.uv_lamps = []
         self.model_labels = []
