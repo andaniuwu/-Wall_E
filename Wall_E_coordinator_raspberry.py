@@ -179,8 +179,19 @@ DEMO_UPDATE_INTERVAL = 2.0         # Seconds between demo data updates
 # Persistent node configuration
 CONFIG_FILE = "walle_system_config.json"
 LOG_FILE = "log_seguridad.csv"
-LOG_COLUMNS = ("Fecha", "Hora", "Nodo", "Evento", "Detalle")
+LOG_COLUMNS = ("Date", "Time", "Node", "Event", "Details")
 LEGACY_SOUND_EVENTS = {"sound on", "sound off", "sound enabled", "sound disabled", "sound re-enabled"}
+EVENT_TRANSLATIONS = {
+    "cambio de contrasena": "PASSWORD CHANGED",
+    "configuracion de nodo": "NODE CONFIGURATION CHANGED",
+    "configuracion de nodos": "NODE CONFIGURATION CHANGED",
+    "perdida de senal": "SIGNAL LOST",
+    "falla de corriente": "CURRENT FAULT",
+    "presion baja": "LOW PRESSURE",
+    "filtro": "FILTER NEEDS CLEANING",
+    "historial limpiado": "LOG CLEARED",
+    "user pin changed": "PASSWORD CHANGED",
+}
 DEFAULT_NODE_COUNT = 10
 DEFAULT_USER_PIN = "1234"
 MASTER_PIN = "1357"                # Recovery PIN; intentionally fixed and not stored in configuration.
@@ -232,16 +243,29 @@ def normalize_user_pin(pin_value):
     return pin if len(pin) == 4 and pin.isdigit() else DEFAULT_USER_PIN
 
 
-def find_usb_map_file():
-    search_roots = []
+def find_usb_mount_points():
     if os.name == 'nt':
         system_drive = os.path.normcase(os.environ.get("SystemDrive", "C:"))
-        search_roots = [f"{letter}:\\" for letter in string.ascii_uppercase
-                        if os.path.exists(f"{letter}:\\") and os.path.normcase(f"{letter}:") != system_drive]
-    else:
-        for root in ("/media", "/mnt"):
-            if os.path.isdir(root):
-                search_roots.extend(os.path.join(root, entry) for entry in os.listdir(root))
+        return [f"{letter}:\\" for letter in string.ascii_uppercase
+                if os.path.exists(f"{letter}:\\") and os.path.normcase(f"{letter}:") != system_drive]
+
+    mount_points = []
+    for search_root in ("/media", "/mnt"):
+        if not os.path.isdir(search_root):
+            continue
+        for current_root, directories, _ in os.walk(search_root):
+            if os.path.ismount(current_root):
+                mount_points.append(current_root)
+                directories[:] = []
+                continue
+            relative_depth = os.path.relpath(current_root, search_root).count(os.sep)
+            if relative_depth >= 2:
+                directories[:] = []
+    return sorted(set(mount_points))
+
+
+def find_usb_map_file():
+    search_roots = find_usb_mount_points()
 
     expected_names = {f"{MAP_FILE_BASENAME}{extension}".lower() for extension in MAP_EXTENSIONS}
     for root in search_roots:
@@ -1066,6 +1090,7 @@ class AppIndustrial:
         self.logs_window = None
         self.detail_windows = {}
         self.active_log_conditions = {}
+        self.migrate_event_log_to_english()
 
         # --- HEADER (Logos, Title, Clock) ---
         self.header = tk.Frame(self.root, bg=HMI_BG)
@@ -1330,34 +1355,34 @@ class AppIndustrial:
 
         if previous_config['node_count'] != normalized_config['node_count']:
             self.registrar_log(
-                "CONFIGURACION DE NODOS",
-                details=f"Cantidad de nodos: {previous_config['node_count']} -> {normalized_config['node_count']}",
+                "NODE CONFIGURATION CHANGED",
+                details=f"Node count: {previous_config['node_count']} -> {normalized_config['node_count']}",
             )
 
         for device_id in range(1, MAX_DEVICE_ID + 1):
             previous_node = previous_config['nodes'][device_id - 1]
             updated_node = normalized_config['nodes'][device_id - 1]
             changes = []
-            for key, label in (("model", "Modelo"), ("maintenance", "Mantenimiento"), ("test_profile", "Perfil de prueba")):
+            for key, label in (("model", "Model"), ("maintenance", "Maintenance"), ("test_profile", "Test profile")):
                 if previous_node[key] != updated_node[key]:
                     old_value = previous_node[key]
                     new_value = updated_node[key]
                     if key == "maintenance":
-                        old_value = "ACTIVO" if old_value else "INACTIVO"
-                        new_value = "ACTIVO" if new_value else "INACTIVO"
+                        old_value = "ENABLED" if old_value else "DISABLED"
+                        new_value = "ENABLED" if new_value else "DISABLED"
                     changes.append(f"{label}: {old_value} -> {new_value}")
             if changes:
                 self.registrar_log(
-                    "CONFIGURACION DE NODO",
+                    "NODE CONFIGURATION CHANGED",
                     device_id=device_id,
                     details="; ".join(changes),
                 )
                 self.active_log_conditions.pop(device_id, None)
 
         if previous_config['system_test_mode_enabled'] != normalized_config['system_test_mode_enabled']:
-            old_mode = "ACTIVO" if previous_config['system_test_mode_enabled'] else "INACTIVO"
-            new_mode = "ACTIVO" if normalized_config['system_test_mode_enabled'] else "INACTIVO"
-            self.registrar_log("CONFIGURACION DE NODOS", details=f"Modo de prueba: {old_mode} -> {new_mode}")
+            old_mode = "ENABLED" if previous_config['system_test_mode_enabled'] else "DISABLED"
+            new_mode = "ENABLED" if normalized_config['system_test_mode_enabled'] else "DISABLED"
+            self.registrar_log("NODE CONFIGURATION CHANGED", details=f"Test mode: {old_mode} -> {new_mode}")
 
         synchronize_runtime_state()
         self.rebuild_node_grid()
@@ -1732,7 +1757,7 @@ class AppIndustrial:
         new_config = get_system_config()
         new_config['user_pin'] = new_pin
         save_system_config(new_config)
-        self.registrar_log("CAMBIO DE CONTRASENA", details="PIN de usuario actualizado")
+        self.registrar_log("PASSWORD CHANGED", details="User PIN updated")
         messagebox.showinfo("User PIN", "User PIN updated.", parent=self.root)
 
     def load_map_image(self):
@@ -1775,6 +1800,48 @@ class AppIndustrial:
         except OSError as error:
             messagebox.showerror("Map update failed", str(error), parent=self.root)
 
+    def export_event_history_to_usb(self):
+        if not self.require_protected_access("export event history"):
+            return
+
+        usb_mount_points = find_usb_mount_points()
+        if not usb_mount_points:
+            messagebox.showwarning(
+                "USB drive not found",
+                "Connect a writable USB drive and try again.",
+                parent=self.root,
+            )
+            return
+
+        rows = self.read_normalized_log_rows()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        last_error = None
+        for mount_point in usb_mount_points:
+            base_name = f"WallE_Event_History_{timestamp}"
+            destination_path = os.path.join(mount_point, f"{base_name}.csv")
+            suffix = 1
+            while os.path.exists(destination_path):
+                destination_path = os.path.join(mount_point, f"{base_name}_{suffix}.csv")
+                suffix += 1
+
+            try:
+                with open(destination_path, "x", newline="", encoding="utf-8") as export_file:
+                    csv.writer(export_file).writerows(rows)
+                messagebox.showinfo(
+                    "Export complete",
+                    f"Event history saved to {destination_path}",
+                    parent=self.root,
+                )
+                return
+            except OSError as error:
+                last_error = error
+
+        messagebox.showerror(
+            "Export failed",
+            f"Could not write to the connected USB drive: {last_error}",
+            parent=self.root,
+        )
+
     def update_sound_button(self):
         if self.sonido_habil:
             self.btn_sound.config(text="SOUND: ON", fg="#d9f99d")
@@ -1793,6 +1860,7 @@ class AppIndustrial:
                        activebackground=HMI_BUTTON_ACTIVE, activeforeground=HMI_TEXT,
                        font=("Arial", 16, "bold"), bd=0, activeborderwidth=2)
         menu.add_command(label="EVENT LOGS", command=self.abrir_historial)
+        menu.add_command(label="EXPORT EVENT HISTORY TO USB", command=self.export_event_history_to_usb)
         menu.add_command(label="NODE SETTINGS", command=self.open_settings_dialog)
         menu.add_command(label="UPDATE MAP FROM USB", command=self.update_map_from_usb)
         menu.add_command(label="CHANGE USER PIN", command=self.change_user_pin)
@@ -2052,29 +2120,29 @@ class AppIndustrial:
                         pressure_status = evaluate_pressure_status(device_id, pressure)
 
                         self.registrar_transicion_evento(
-                            device_id, "perdida_senal", False, "PERDIDA DE SENAL"
+                            device_id, "signal_lost", False, "SIGNAL LOST"
                         )
                         for channel, current in enumerate((curr1, curr2), start=1):
                             current_fault = current < CURRENT_VISUAL_ON_THRESHOLD or current > CURRENT_MAX
                             self.registrar_transicion_evento(
                                 device_id,
-                                f"corriente_ch{channel}",
+                                f"current_ch{channel}",
                                 current_fault,
-                                "FALLA DE CORRIENTE",
+                                "CURRENT FAULT",
                                 f"CH{channel}: {current:.0f} mA",
                             )
                         self.registrar_transicion_evento(
                             device_id,
-                            "presion_baja",
+                            "low_pressure",
                             pressure_status['state'] == 'LOW_FLOW',
-                            "PRESION BAJA",
+                            "LOW PRESSURE",
                             f"{pressure:.1f} Pa ({node_config['model']})",
                         )
                         self.registrar_transicion_evento(
                             device_id,
-                            "filtro",
+                            "filter",
                             pressure_status['state'] == 'FILTER',
-                            "FILTRO",
+                            "FILTER NEEDS CLEANING",
                             f"{pressure:.1f} Pa ({node_config['model']})",
                         )
                         
@@ -2135,20 +2203,20 @@ class AppIndustrial:
                         )
                         self.registrar_transicion_evento(
                             device_id,
-                            "perdida_senal",
+                            "signal_lost",
                             signal_failure_applies,
-                            "PERDIDA DE SENAL",
-                            f"{consecutive_failures} consultas consecutivas sin respuesta",
+                            "SIGNAL LOST",
+                            f"{consecutive_failures} consecutive requests without a response",
                         )
                         for channel in (1, 2):
                             self.registrar_transicion_evento(
-                                device_id, f"corriente_ch{channel}", False, "FALLA DE CORRIENTE"
+                                device_id, f"current_ch{channel}", False, "CURRENT FAULT"
                             )
                         self.registrar_transicion_evento(
-                            device_id, "presion_baja", False, "PRESION BAJA"
+                            device_id, "low_pressure", False, "LOW PRESSURE"
                         )
                         self.registrar_transicion_evento(
-                            device_id, "filtro", False, "FILTRO"
+                            device_id, "filter", False, "FILTER NEEDS CLEANING"
                         )
                         
                         if self.test_mode:
@@ -2349,6 +2417,97 @@ class AppIndustrial:
             if not active_conditions:
                 self.active_log_conditions.pop(device_id, None)
 
+    def normalize_log_rows(self, rows, hide_legacy_sound=False):
+        normalized_rows = [LOG_COLUMNS]
+        known_headers = {
+            tuple(column.casefold() for column in LOG_COLUMNS),
+            ("fecha", "hora", "nodo", "evento", "detalle"),
+        }
+        detail_translations = (
+            ("Cantidad de nodos:", "Node count:"),
+            ("Modelo:", "Model:"),
+            ("Mantenimiento:", "Maintenance:"),
+            ("Perfil de prueba:", "Test profile:"),
+            ("Modo de prueba:", "Test mode:"),
+            ("INACTIVO", "DISABLED"),
+            ("ACTIVO", "ENABLED"),
+            ("PIN de usuario actualizado", "User PIN updated"),
+            ("consultas consecutivas sin respuesta", "consecutive requests without a response"),
+        )
+
+        for row in rows:
+            if not row or tuple(cell.strip().casefold() for cell in row[:5]) in known_headers:
+                continue
+
+            structured_row = False
+            if len(row) >= 5:
+                try:
+                    datetime.strptime(row[0].strip(), "%Y-%m-%d")
+                    structured_row = True
+                except ValueError:
+                    pass
+
+            if structured_row:
+                date, event_time, node, event, details = row[:5]
+            elif len(row) >= 2:
+                timestamp = row[0].strip()
+                event = row[1].strip()
+                details = ", ".join(row[2:]).strip()
+                node = "SYSTEM"
+                parsed_timestamp = None
+                for timestamp_format in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                    try:
+                        parsed_timestamp = datetime.strptime(timestamp, timestamp_format)
+                        break
+                    except ValueError:
+                        continue
+                if parsed_timestamp:
+                    date = parsed_timestamp.strftime("%Y-%m-%d")
+                    event_time = parsed_timestamp.strftime("%H:%M:%S")
+                else:
+                    date, event_time = timestamp, ""
+            else:
+                continue
+
+            event = event.strip()
+            if hide_legacy_sound and event.casefold() in LEGACY_SOUND_EVENTS:
+                continue
+            event = EVENT_TRANSLATIONS.get(event.casefold(), event)
+            if event.casefold().startswith("logs cleared on "):
+                event = "LOG CLEARED"
+            for old_text, new_text in detail_translations:
+                details = details.replace(old_text, new_text)
+            if node.strip().casefold() == "sistema":
+                node = "SYSTEM"
+
+            normalized_rows.append((date, event_time, node, event, details))
+
+        return normalized_rows
+
+    def read_normalized_log_rows(self, hide_legacy_sound=True):
+        try:
+            with open(LOG_FILE, "r", newline="", encoding="utf-8") as log_file:
+                rows = list(csv.reader(log_file))
+        except FileNotFoundError:
+            rows = []
+        return self.normalize_log_rows(rows, hide_legacy_sound=hide_legacy_sound)
+
+    def migrate_event_log_to_english(self):
+        if not os.path.isfile(LOG_FILE):
+            return
+        try:
+            with open(LOG_FILE, "r", newline="", encoding="utf-8") as log_file:
+                rows = list(csv.reader(log_file))
+            if rows and tuple(cell.strip().casefold() for cell in rows[0][:5]) == tuple(
+                column.casefold() for column in LOG_COLUMNS
+            ):
+                return
+            normalized_rows = self.normalize_log_rows(rows, hide_legacy_sound=False)
+            with open(LOG_FILE, "w", newline="", encoding="utf-8") as log_file:
+                csv.writer(log_file).writerows(normalized_rows)
+        except (OSError, csv.Error) as error:
+            print(f"Log migration error: {error}")
+
     def registrar_log(self, event, device_id=None, details=""):
         try:
             timestamp = datetime.now()
@@ -2359,25 +2518,16 @@ class AppIndustrial:
                 writer.writerow((
                     timestamp.strftime("%Y-%m-%d"),
                     timestamp.strftime("%H:%M:%S"),
-                    f"Node-{device_id}" if device_id is not None else "SISTEMA",
-                    event,
+                    f"Node-{device_id}" if device_id is not None else "SYSTEM",
+                    EVENT_TRANSLATIONS.get(event.strip().casefold(), event),
                     details,
                 ))
         except Exception as e:
             print(f"Log write error: {e}")
 
     def leer_eventos_log(self, limit=50):
-        with open(LOG_FILE, "r", newline="", encoding="utf-8") as log_file:
-            rows = list(csv.reader(log_file))
-
-        visible_rows = []
-        for row in rows:
-            if not row:
-                continue
-            event = row[3] if len(row) > 3 else row[-1]
-            if event.strip().casefold() not in LEGACY_SOUND_EVENTS:
-                visible_rows.append(", ".join(row))
-        return visible_rows[-limit:]
+        rows = self.read_normalized_log_rows(hide_legacy_sound=True)[1:]
+        return [", ".join(row) for row in rows[-limit:]]
 
     def abrir_historial(self):
         if self.toggle_window('logs_window') is None:
@@ -2443,8 +2593,8 @@ class AppIndustrial:
                 writer.writerow((
                     timestamp.strftime("%Y-%m-%d"),
                     timestamp.strftime("%H:%M:%S"),
-                    "SISTEMA",
-                    "HISTORIAL LIMPIADO",
+                    "SYSTEM",
+                    "LOG CLEARED",
                     "",
                 ))
             messagebox.showinfo("Success", "Logs cleared successfully")
