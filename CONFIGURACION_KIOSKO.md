@@ -32,6 +32,7 @@ This guide replaces the old `walle_kiosko` instructions. It does not create a sh
 - Deployed code is stored at `/opt/walle-guardian/app`, owned by root and read-only to the operator. Writable configuration, event history, and application images are stored in `/var/lib/walle-guardian`.
 - The administrative desktop keeps its panel, menu, and icons. Only its background is changed to black; the change takes effect when the graphical session starts again.
 - The login selector uses a black background and a generic avatar instead of the Raspberry Pi logo. The administrative account is displayed as `Admin-account`; its original Linux username, home directory, password, and sudo privileges are preserved.
+- The installer backs up the Raspberry Pi boot files, sets `disable_splash=1` in `config.txt`, removes Plymouth's `splash` argument, and adds `logo.nologo` to the single-line `cmdline.txt`. These boot-logo changes take effect after reboot.
 
 ## Installation
 
@@ -52,7 +53,7 @@ Confirm that this directory contains the code version you intend to deploy. Inst
 
 3. Wait for `Wall-E Guardian configured`, then restart the Raspberry Pi. Do not close the graphical session during installation. At the next startup, select either the administrative account or `walle-guardian`.
 
-The script backs up configuration files it changes under `/var/backups/walle-guardian-kiosk/`. It does not restart LightDM or reboot the device automatically.
+The script backs up configuration files it changes, including the boot files, under `/var/backups/walle-guardian-kiosk/`. It does not restart LightDM or reboot the device automatically.
 
 ## Updating the Deployment
 

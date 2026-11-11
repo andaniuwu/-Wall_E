@@ -1,6 +1,6 @@
 # Wall-E LoRa Project
 
-> **Wall-E Guardian FinalVersion 2026:** this branch prepares the Guardian coordinator for **Raspberry Pi 5 with 64-bit Raspberry Pi OS**, a 720x1280 DSI-2 touchscreen, SX1278 LoRa, and a LightDM/labwc kiosk session. Operator setup is documented in [CONFIGURACION_KIOSKO.md](CONFIGURACION_KIOSKO.md). The historical README content below that mentions Raspberry Pi 4 and other receivers does not describe this Guardian release.
+> **Wall-E Guardian FinalVersion 2026:** this branch prepares the Guardian coordinator for **Raspberry Pi 5 with 64-bit Raspberry Pi OS**, a 720x1280 DSI-2 touchscreen, SX1278 LoRa, and a LightDM/labwc kiosk session. The installer configures the account selector and suppresses firmware/Plymouth boot logos. Operator setup is documented in [CONFIGURACION_KIOSKO.md](CONFIGURACION_KIOSKO.md). The historical README content below that mentions Raspberry Pi 4 and other receivers does not describe this Guardian release.
 >
 > **Installable microSD image: pending.** This branch contains the kiosk code and installer, but no distributable `.img` has been built or validated yet. Before publishing one, create a reproducible 64-bit Raspberry Pi OS build, test it on a fresh Pi 5 microSD card, and ensure it contains no passwords, SSH keys, event logs, plant configuration, or device-specific maps.
 

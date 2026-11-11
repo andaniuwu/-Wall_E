@@ -9,6 +9,8 @@ readonly APP_NAME="Wall_E_coordinator_raspberry.py"
 readonly LIGHTDM_MAIN="/etc/lightdm/lightdm.conf"
 readonly LIGHTDM_DROPIN="/etc/lightdm/lightdm.conf.d/60-walle-guardian.conf"
 readonly PI_GREETER_CONFIG="/etc/lightdm/pi-greeter.conf"
+readonly BOOT_FIRMWARE_DIR="/boot/firmware"
+readonly BOOT_LEGACY_DIR="/boot"
 readonly PAM_LIGHTDM="/etc/pam.d/lightdm"
 readonly SSH_DROPIN="/etc/ssh/sshd_config.d/60-walle-guardian.conf"
 readonly INSTALL_MARKER="/etc/walle-guardian-kiosk/installed"
@@ -32,6 +34,15 @@ check_source() {
     [[ -x /usr/sbin/sshd ]] || die "The OpenSSH server is not installed."
     [[ -f "$LIGHTDM_MAIN" && -f "$PI_GREETER_CONFIG" && -f "$PAM_LIGHTDM" ]] || die "Expected LightDM/PAM configuration files are missing."
     [[ -f /usr/share/icons/AdwaitaLegacy/48x48/status/avatar-default.png ]] || die "The generic user avatar is not available."
+    if [[ -f "$BOOT_FIRMWARE_DIR/config.txt" && -f "$BOOT_FIRMWARE_DIR/cmdline.txt" ]]; then
+        BOOT_DIR="$BOOT_FIRMWARE_DIR"
+    elif [[ -f "$BOOT_LEGACY_DIR/config.txt" && -f "$BOOT_LEGACY_DIR/cmdline.txt" ]]; then
+        BOOT_DIR="$BOOT_LEGACY_DIR"
+    else
+        die "Raspberry Pi boot config.txt and cmdline.txt were not found."
+    fi
+    awk 'END { exit (NR == 1 ? 0 : 1) }' "$BOOT_DIR/cmdline.txt" || \
+        die "$BOOT_DIR/cmdline.txt must contain exactly one kernel command line."
 }
 
 check_source
@@ -39,6 +50,7 @@ check_source
 if [[ "${1:-}" == "--check" ]]; then
     printf 'Preflight passed. Current account: %s\n' "$(id -un)"
     printf 'Application: %s/%s\n' "$SOURCE_DIR" "$APP_NAME"
+    printf 'Boot logo suppression: %s/config.txt and cmdline.txt\n' "$BOOT_DIR"
     if dpkg-query -W -f='${db:Status-Status}' swaybg 2>/dev/null | grep -qx installed; then
         printf 'swaybg: installed\n'
     else
@@ -84,9 +96,35 @@ backup_file() {
 }
 
 printf 'Backups: %s\n' "$BACKUP_DIR"
-for path in "$LIGHTDM_MAIN" "$LIGHTDM_DROPIN" "$PI_GREETER_CONFIG" "$PAM_LIGHTDM" "$SSH_DROPIN"; do
+for path in "$LIGHTDM_MAIN" "$LIGHTDM_DROPIN" "$PI_GREETER_CONFIG" "$PAM_LIGHTDM" "$SSH_DROPIN" \
+    "$BOOT_DIR/config.txt" "$BOOT_DIR/cmdline.txt"; do
     backup_file "$path"
 done
+
+sed -i -E '/^[[:space:]]*disable_splash[[:space:]]*=/d' "$BOOT_DIR/config.txt"
+printf '\n[all]\n# Hide the Raspberry Pi firmware splash screen.\ndisable_splash=1\n' >> "$BOOT_DIR/config.txt"
+
+cmdline_temp="$(mktemp)"
+read -r -a cmdline_args < "$BOOT_DIR/cmdline.txt"
+filtered_cmdline=()
+logo_nologo_added=false
+for argument in "${cmdline_args[@]}"; do
+    [[ "$argument" == splash ]] && continue
+    if [[ "$argument" == logo.nologo ]]; then
+        if [[ "$logo_nologo_added" == false ]]; then
+            filtered_cmdline+=("$argument")
+            logo_nologo_added=true
+        fi
+        continue
+    fi
+    filtered_cmdline+=("$argument")
+done
+if [[ "$logo_nologo_added" == false ]]; then
+    filtered_cmdline+=(logo.nologo)
+fi
+printf '%s\n' "${filtered_cmdline[*]}" > "$cmdline_temp"
+cat "$cmdline_temp" > "$BOOT_DIR/cmdline.txt"
+rm -f "$cmdline_temp"
 
 missing_packages=()
 for package_name in python3-tk python3-pil python3-pil.imagetk python3-spidev python3-rpi-lgpio swaybg udisks2; do
@@ -266,4 +304,5 @@ printf 'Operator: %s (password locked; gpio,spi groups).\n' "$OPERATOR_USER"
 printf 'Read-only application code: %s/%s\n' "$APP_DIR" "$APP_NAME"
 printf 'Operator data: %s\n' "$STATE_DIR"
 printf 'Configuration backup: %s\n' "$BACKUP_DIR"
-printf 'Restart the Raspberry Pi to show the account selector.\n'
+printf 'Firmware and Plymouth logos are disabled on the next boot.\n'
+printf 'Restart the Raspberry Pi to apply all boot and account-selector changes.\n'
