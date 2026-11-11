@@ -7,8 +7,12 @@
               Developed by: Andani Emmanuel Lopez Arechar
 ================================================================================
 
-This program runs on the Raspberry Pi 4 and acts as the central coordinator
-for the Wall-E monitoring system. It:
+This Guardian release targets Raspberry Pi 5 with 64-bit Raspberry Pi OS and
+acts as the central coordinator for the Wall-E monitoring system. The older
+Raspberry Pi 4 receiver notes elsewhere in the repository are historical and
+do not describe this deployment. A prebuilt microSD image has not been produced.
+
+It:
 
 1. Periodically queries each configured remote ESP32 device
 2. Receives status responses from the devices
@@ -250,7 +254,7 @@ def find_usb_mount_points():
                 if os.path.exists(f"{letter}:\\") and os.path.normcase(f"{letter}:") != system_drive]
 
     mount_points = []
-    for search_root in ("/media", "/mnt"):
+    for search_root in ("/media", "/mnt", "/run/media"):
         if not os.path.isdir(search_root):
             continue
         for current_root, directories, _ in os.walk(search_root):
@@ -264,8 +268,45 @@ def find_usb_mount_points():
     return sorted(set(mount_points))
 
 
+def mount_usb_storage():
+    """Mount unmounted partitions belonging to USB-connected drives."""
+    try:
+        result = subprocess.run(
+            ["lsblk", "--json", "--tree", "--output", "PATH,TRAN,TYPE,MOUNTPOINTS"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        block_devices = json.loads(result.stdout).get("blockdevices", [])
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return find_usb_mount_points()
+
+    def mount_usb_partitions(devices, parent_is_usb=False):
+        for device in devices:
+            is_usb = parent_is_usb or (device.get("tran") or "").lower() == "usb"
+            mountpoints = [path for path in (device.get("mountpoints") or []) if path]
+            if is_usb and device.get("type") == "part" and not mountpoints:
+                device_path = device.get("path")
+                if device_path:
+                    try:
+                        subprocess.run(
+                            ["udisksctl", "mount", "--block-device", device_path],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            timeout=20,
+                        )
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+            mount_usb_partitions(device.get("children") or [], is_usb)
+
+    mount_usb_partitions(block_devices)
+    return find_usb_mount_points()
+
+
 def find_usb_map_file():
-    search_roots = find_usb_mount_points()
+    search_roots = mount_usb_storage()
 
     expected_names = {f"{MAP_FILE_BASENAME}{extension}".lower() for extension in MAP_EXTENSIONS}
     for root in search_roots:
@@ -1214,8 +1255,9 @@ class AppIndustrial:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         is_target_display = screen_width == TARGET_DISPLAY_WIDTH and screen_height == TARGET_DISPLAY_HEIGHT
+        force_kiosk_fullscreen = os.environ.get("WALLE_GUARDIAN_KIOSK") == "1"
 
-        if is_target_display:
+        if is_target_display or force_kiosk_fullscreen:
             self.root.attributes("-fullscreen", True)
             self.root.resizable(False, False)
             return
@@ -1804,7 +1846,7 @@ class AppIndustrial:
         if not self.require_protected_access("export event history"):
             return
 
-        usb_mount_points = find_usb_mount_points()
+        usb_mount_points = mount_usb_storage()
         if not usb_mount_points:
             messagebox.showwarning(
                 "USB drive not found",
@@ -1866,6 +1908,7 @@ class AppIndustrial:
         menu.add_command(label="CHANGE USER PIN", command=self.change_user_pin)
         menu.add_separator()
         menu.add_command(label="RESTART PROGRAM", command=self.reiniciar_programa)
+        menu.add_command(label="SHUT DOWN SYSTEM", command=self.apagar_sistema)
         try:
             menu.tk_popup(self.root.winfo_rootx() + 440, self.root.winfo_rooty() + 1030)
         finally:
@@ -1992,6 +2035,18 @@ class AppIndustrial:
             restart_requested = True
             coordinator_running = False
             self.root.after(500, lambda: self.root.quit())
+
+    def apagar_sistema(self):
+        """Power off the Raspberry Pi after explicit user confirmation."""
+        if not messagebox.askyesno("Shut Down", "Shut down the system?", parent=self.root):
+            return
+
+        self.registrar_log("SYSTEM SHUTDOWN REQUESTED")
+        try:
+            subprocess.run(["systemctl", "poweroff"], check=True, timeout=15, capture_output=True, text=True)
+        except (OSError, subprocess.SubprocessError) as error:
+            details = getattr(error, "stderr", None) or str(error)
+            messagebox.showerror("Shutdown failed", f"The system could not be shut down: {details}", parent=self.root)
 
     def classify_current_status(self, current_mA):
         """Return (status_code, color, description) for active current indicators."""

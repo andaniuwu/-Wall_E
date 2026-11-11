@@ -1,5 +1,9 @@
 # Wall-E LoRa Project
 
+> **Wall-E Guardian FinalVersion 2026:** this branch prepares the Guardian coordinator for **Raspberry Pi 5 with 64-bit Raspberry Pi OS**, a 720x1280 DSI-2 touchscreen, SX1278 LoRa, and a LightDM/labwc kiosk session. Operator setup is documented in [CONFIGURACION_KIOSKO.md](CONFIGURACION_KIOSKO.md). The historical README content below that mentions Raspberry Pi 4 and other receivers does not describe this Guardian release.
+>
+> **Installable microSD image: pending.** This branch contains the kiosk code and installer, but no distributable `.img` has been built or validated yet. Before publishing one, create a reproducible 64-bit Raspberry Pi OS build, test it on a fresh Pi 5 microSD card, and ensure it contains no passwords, SSH keys, event logs, plant configuration, or device-specific maps.
+
 Wireless communication project using LoRa module SX1278/SX1276 between Raspberry Pi 4 and Arduino/ESP32.
 
 ## Project Overview
@@ -134,7 +138,7 @@ rasp_raccoon_berry
 > 
 > En este proyecto:
 > 
-> | SX1278 Pin | ESP32 GPIO | ESP32 Pin# | Función en código |
+> | SX1278 Pin | ESP32 GPIO | ESP32 Pin# | Code function |
 > |-----------|------------|------------|-------------------|
 > | SCK       | GPIO12     | Pin 19     | SPI SCK           |
 > | MISO      | GPIO13     | Pin 18     | SPI MISO          |
@@ -145,10 +149,10 @@ rasp_raccoon_berry
 > | 3.3V      | 3V3        | Pin 2/3    | Alimentación      |
 > | GND       | GND        | Pin 1/15/16| Tierra            |
 
-Asegúrate de cablear según esta tabla y de que tu código incluya la línea:
+Connect the hardware according to this table and ensure the code includes:
 
 ```cpp
 SPI.begin(12, 13, 11, 18); // SCK, MISO, MOSI, SS
 ```
 
-Esto garantiza compatibilidad y funcionamiento correcto con el SX1278.
+This provides the required pin configuration for the SX1278.
